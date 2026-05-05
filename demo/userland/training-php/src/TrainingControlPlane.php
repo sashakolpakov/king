@@ -87,6 +87,14 @@ namespace Training {
         }
     }
 
+    final class Workers
+    {
+        public static function gpuServer(string $id): GpuWorkerSpec
+        {
+            return new GpuWorkerSpec($id);
+        }
+    }
+
     final class ObjectStoreData implements PlanSection
     {
         private ?string $format = null;
@@ -846,6 +854,14 @@ namespace Training {
         }
 
         /**
+         * @param list<GpuWorkerSpec> $workers
+         */
+        public function coordinateAcross(array $workers): DistributedTrainingNetwork
+        {
+            return DistributedTrainingNetwork::fromRun($this, $workers);
+        }
+
+        /**
          * @param array<string,mixed> $value
          */
         private static function json(array $value): string
@@ -858,11 +874,395 @@ namespace Training {
         }
     }
 
+    final class GpuWorkerSpec implements PlanSection
+    {
+        private ?string $websocket = null;
+        private ?string $host = null;
+        private ?string $rack = null;
+        private int $gpus = 1;
+        private int $rankSlots = 1;
+        private ?int $gpuMemoryGb = null;
+        private ?string $backend = null;
+        private bool $nccl = true;
+        private bool $objectStore = true;
+        private bool $iibin = true;
+
+        public function __construct(private string $id)
+        {
+            $this->id = trim($id);
+            if ($this->id === '') {
+                throw new InvalidArgumentException('GPU worker id must not be empty.');
+            }
+        }
+
+        public function host(string $host): self
+        {
+            $host = trim($host);
+            if ($host === '') {
+                throw new InvalidArgumentException('GPU worker host must not be empty.');
+            }
+
+            $this->host = $host;
+            return $this;
+        }
+
+        public function websocket(string $uri): self
+        {
+            $uri = trim($uri);
+            if (!preg_match('/^wss?:\/\/[^\/\s]+/i', $uri)) {
+                throw new InvalidArgumentException('GPU worker websocket endpoint must be ws:// or wss://.');
+            }
+
+            $this->websocket = $uri;
+            return $this;
+        }
+
+        public function rack(string $rack): self
+        {
+            $rack = trim($rack);
+            if ($rack === '') {
+                throw new InvalidArgumentException('GPU worker rack must not be empty.');
+            }
+
+            $this->rack = $rack;
+            return $this;
+        }
+
+        public function gpus(int $gpus): self
+        {
+            Validation::positiveInt($gpus, 'GPU count');
+            $this->gpus = $gpus;
+            if ($this->rankSlots < $gpus) {
+                $this->rankSlots = $gpus;
+            }
+            return $this;
+        }
+
+        public function rankSlots(int $rankSlots): self
+        {
+            Validation::positiveInt($rankSlots, 'worker rank slots');
+            $this->rankSlots = $rankSlots;
+            return $this;
+        }
+
+        public function gpuMemoryGb(int $gb): self
+        {
+            Validation::positiveInt($gb, 'GPU memory GB');
+            $this->gpuMemoryGb = $gb;
+            return $this;
+        }
+
+        public function backend(string $backend): self
+        {
+            $backend = trim($backend);
+            if ($backend === '') {
+                throw new InvalidArgumentException('GPU worker backend must not be empty.');
+            }
+
+            $this->backend = $backend;
+            return $this;
+        }
+
+        public function withoutNccl(): self
+        {
+            $this->nccl = false;
+            return $this;
+        }
+
+        public function toArray(): array
+        {
+            return [
+                'id' => $this->id,
+                'host' => Validation::required($this->host, 'GPU worker host'),
+                'websocket' => Validation::required($this->websocket, 'GPU worker websocket endpoint'),
+                'rack' => $this->rack,
+                'gpus' => $this->gpus,
+                'rank_slots' => $this->rankSlots,
+                'gpu_memory_gb' => Validation::required($this->gpuMemoryGb, 'GPU memory GB'),
+                'backend' => Validation::required($this->backend, 'GPU worker backend'),
+                'capabilities' => [
+                    'nccl' => $this->nccl,
+                    'object_store' => $this->objectStore,
+                    'iibin' => $this->iibin,
+                    'websocket' => true,
+                ],
+            ];
+        }
+    }
+
+    final class DistributedTrainingNetwork
+    {
+        /** @var array<string,mixed> */
+        private array $summary;
+
+        /**
+         * @param list<GpuWorkerSpec> $workers
+         */
+        public static function fromRun(TrainingRun $run, array $workers): self
+        {
+            if ($workers === []) {
+                throw new InvalidArgumentException('at least one GPU worker is required.');
+            }
+
+            $workerRows = [];
+            foreach ($workers as $worker) {
+                if (!$worker instanceof GpuWorkerSpec) {
+                    throw new InvalidArgumentException('workers must be Training\\GpuWorkerSpec instances.');
+                }
+                $workerRows[] = $worker->toArray();
+            }
+
+            return new self($run->plan(), $workerRows);
+        }
+
+        /**
+         * @param array<string,mixed> $plan
+         * @param list<array<string,mixed>> $workers
+         */
+        private function __construct(private array $plan, private array $workers)
+        {
+            $this->summary = $this->buildSummary();
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        public function summary(): array
+        {
+            return $this->summary;
+        }
+
+        /**
+         * @return list<array<string,mixed>>
+         */
+        public function rankLeases(): array
+        {
+            return $this->summary['rendezvous']['rank_leases'];
+        }
+
+        /**
+         * @return list<array<string,mixed>>
+         */
+        public function orchestratorSteps(): array
+        {
+            return $this->summary['orchestrator']['steps'];
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        public function checkpointManifest(): array
+        {
+            return $this->summary['checkpoint_manifest'];
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        private function buildSummary(): array
+        {
+            $totalSlots = array_sum(array_map(static fn(array $worker): int => (int) $worker['rank_slots'], $this->workers));
+            $totalGpus = array_sum(array_map(static fn(array $worker): int => (int) $worker['gpus'], $this->workers));
+            $racks = array_values(array_unique(array_filter(array_map(static fn(array $worker): ?string => $worker['rack'] ?? null, $this->workers))));
+            $ncclReady = array_values(array_filter($this->workers, static fn(array $worker): bool => ($worker['capabilities']['nccl'] ?? false) === true));
+            $elastic = $this->plan['failure_policy']['elastic_ranks'] ?? ['min' => 1, 'max' => $totalSlots];
+            $minRanks = (int) ($elastic['min'] ?? 1);
+            $maxRanks = (int) ($elastic['max'] ?? $totalSlots);
+            $admittedRanks = min($totalSlots, $maxRanks);
+            $admitted = $totalSlots >= $minRanks && count($ncclReady) === count($this->workers) && count($this->workers) >= 2;
+            $runId = (string) $this->plan['run_id'];
+            $rendezvousPrefix = (string) ($this->plan['execution']['rendezvous_object_prefix'] ?? ObjectStoreUriMapper::objectId('king://runs/' . $runId . '/rdzv', 'rendezvous'));
+
+            return [
+                'contract' => 'king.training.network.v1',
+                'run_id' => $runId,
+                'topology' => [
+                    'mode' => 'king_coordinated_gpu_fleet',
+                    'centralized_compute' => false,
+                    'controller_role' => 'control_plane_only',
+                    'worker_count' => count($this->workers),
+                    'total_gpus' => $totalGpus,
+                    'total_rank_slots' => $totalSlots,
+                    'rack_count' => count($racks),
+                    'racks' => $racks,
+                ],
+                'admission' => [
+                    'state' => $admitted ? 'accepted' : 'insufficient_capacity',
+                    'min_ranks' => $minRanks,
+                    'max_ranks' => $maxRanks,
+                    'admitted_ranks' => $admitted ? $admittedRanks : 0,
+                    'requires_all_workers_nccl' => true,
+                    'requires_at_least_two_workers' => true,
+                ],
+                'workers' => $this->workers,
+                'rendezvous' => [
+                    'store' => 'king_object_store',
+                    'prefix' => $rendezvousPrefix,
+                    'lease_content_type' => 'application/vnd.king.training-rank-lease+json',
+                    'claim_precondition' => 'if_none_match=*',
+                    'heartbeat_update_precondition' => 'if_match+expected_version',
+                    'rank_leases' => $this->rankLeasesFor($admitted ? $admittedRanks : 0, $rendezvousPrefix),
+                ],
+                'orchestrator' => [
+                    'runtime' => 'king_pipeline_orchestrator',
+                    'tool' => (string) $this->plan['execution']['orchestrator']['tool'],
+                    'dispatch_api' => 'king_pipeline_orchestrator_dispatch',
+                    'worker_api' => 'king_pipeline_orchestrator_worker_run_next',
+                    'steps' => $this->orchestratorStepsFor($admitted ? $admittedRanks : 0),
+                ],
+                'events' => [
+                    'transport' => 'websocket',
+                    'frame_codec' => 'iibin',
+                    'schema' => WireContracts::RUN_EVENT_SCHEMA,
+                    'batch_schema' => WireContracts::RUN_EVENT_BATCH_SCHEMA,
+                    'batch_limit' => WireContracts::IIBIN_BATCH_LIMIT,
+                    'operational_event_batch_limit' => WireContracts::TRAINING_EVENT_OPERATIONAL_BATCH_LIMIT,
+                    'max_payload_bytes' => WireContracts::TRAINING_EVENT_MAX_PAYLOAD_BYTES,
+                    'binary_frame' => WireContracts::trainingEventFrameContract(),
+                    'worker_endpoints' => array_column($this->workers, 'websocket', 'id'),
+                ],
+                'checkpoint_manifest' => $this->checkpointManifestFor($admitted ? $admittedRanks : 0),
+            ];
+        }
+
+        /**
+         * @return list<array<string,mixed>>
+         */
+        private function rankLeasesFor(int $rankCount, string $rendezvousPrefix): array
+        {
+            $leases = [];
+            $runId = (string) $this->plan['run_id'];
+            for ($rank = 0; $rank < $rankCount; $rank++) {
+                $worker = $this->workerForRank($rank);
+                $leases[] = [
+                    'rank' => $rank,
+                    'worker_id' => $worker['id'],
+                    'object_id' => ObjectStoreUriMapper::controlObjectId('moe-rank-claim-v1', $runId, 'rank-' . $rank),
+                    'heartbeat_object_id' => ObjectStoreUriMapper::controlObjectId('moe-heartbeat-v1', $runId, (string) $worker['id']),
+                    'rendezvous_state_object_id' => ObjectStoreUriMapper::controlObjectId('moe-rdzv-v1', $runId),
+                    'lease_until_ms_field' => 'lease_until_ms',
+                    'fencing_token_field' => 'fencing_token',
+                    'state' => 'claimed',
+                ];
+            }
+
+            return $leases;
+        }
+
+        /**
+         * @return list<array<string,mixed>>
+         */
+        private function orchestratorStepsFor(int $rankCount): array
+        {
+            $steps = [];
+            foreach ($this->workers as $worker) {
+                $rankIds = [];
+                for ($rank = 0; $rank < $rankCount; $rank++) {
+                    if ($this->workerForRank($rank)['id'] === $worker['id']) {
+                        $rankIds[] = $rank;
+                    }
+                }
+
+                if ($rankIds === []) {
+                    continue;
+                }
+
+                $steps[] = [
+                    'tool' => (string) $this->plan['execution']['orchestrator']['tool'],
+                    'worker_id' => $worker['id'],
+                    'handler_boundary' => 'process_local_rebind_required',
+                    'rank_ids' => $rankIds,
+                    'backend' => $worker['backend'],
+                    'websocket' => $worker['websocket'],
+                ];
+            }
+
+            return $steps;
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        private function checkpointManifestFor(int $rankCount): array
+        {
+            $targetPrefix = (string) $this->plan['checkpointing']['target_object_prefix'];
+            $runId = (string) $this->plan['run_id'];
+            $shards = [];
+            for ($rank = 0; $rank < $rankCount; $rank++) {
+                $worker = $this->workerForRank($rank);
+                $shards[] = [
+                    'rank' => $rank,
+                    'worker_id' => $worker['id'],
+                    'object_id' => ObjectStoreUriMapper::controlObjectId('moe-checkpoint-shard-v1', $runId, 'rank-' . $rank, 'latest'),
+                    'content_type' => 'application/vnd.king.training-checkpoint-shard+iibin',
+                ];
+            }
+
+            return [
+                'store' => 'king_object_store',
+                'target_object_prefix' => $targetPrefix,
+                'manifest_object_id' => ObjectStoreUriMapper::controlObjectId('moe-checkpoint-manifest-v1', $runId),
+                'content_type' => 'application/vnd.king.training-checkpoint-manifest+json',
+                'commit_precondition' => 'if_match+expected_version',
+                'shards' => $shards,
+            ];
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        private function workerForRank(int $rank): array
+        {
+            $offset = 0;
+            foreach ($this->workers as $worker) {
+                $slots = (int) $worker['rank_slots'];
+                if ($rank < $offset + $slots) {
+                    return $worker;
+                }
+                $offset += $slots;
+            }
+
+            return $this->workers[array_key_last($this->workers)];
+        }
+    }
+
     final class WireContracts
     {
         public const RUN_ENVELOPE_SCHEMA = 'KingTrainingRunEnvelopeV1';
         public const RUN_EVENT_SCHEMA = 'KingTrainingRunEventV1';
+        public const RUN_EVENT_BATCH_SCHEMA = 'KingTrainingRunEventBatchV1';
         public const IIBIN_BATCH_LIMIT = 65536;
+        public const TRAINING_EVENT_OPERATIONAL_BATCH_LIMIT = 1024;
+        public const TRAINING_EVENT_MAX_PAYLOAD_BYTES = 1048576;
+
+        /**
+         * @return array<string,mixed>
+         */
+        public static function trainingEventFrameContract(): array
+        {
+            return [
+                'contract' => 'king.training.event-frame.v1',
+                'magic' => 'KTRN',
+                'version' => 1,
+                'byte_order' => 'big_endian',
+                'payload_codec' => 'iibin',
+                'payload_schema' => self::RUN_EVENT_BATCH_SCHEMA,
+                'sequence_scope' => 'per_worker_stream',
+                'required_fields' => [
+                    'frame_type',
+                    'flags',
+                    'sequence',
+                    'run_id_crc32',
+                    'worker_id_crc32',
+                    'rank',
+                    'event_count',
+                    'payload_length',
+                ],
+                'reserved_bytes_must_be_zero' => true,
+                'max_payload_bytes' => self::TRAINING_EVENT_MAX_PAYLOAD_BYTES,
+                'max_events_per_frame' => self::TRAINING_EVENT_OPERATIONAL_BATCH_LIMIT,
+            ];
+        }
 
         public static function defineIibinSchemasIfAvailable(): void
         {
@@ -886,6 +1286,21 @@ namespace Training {
                     'type' => ['type' => 'string', 'tag' => 3],
                     'state' => ['type' => 'string', 'tag' => 4],
                     'message' => ['type' => 'string', 'tag' => 5],
+                    'worker_id' => ['type' => 'string', 'tag' => 6],
+                    'rank' => ['type' => 'int32', 'tag' => 7],
+                    'global_step' => ['type' => 'int64', 'tag' => 8],
+                    'event_sequence' => ['type' => 'int64', 'tag' => 9],
+                ]);
+            }
+
+            if (!\function_exists('king_proto_is_schema_defined') || !\king_proto_is_schema_defined(self::RUN_EVENT_BATCH_SCHEMA)) {
+                \king_proto_define_schema(self::RUN_EVENT_BATCH_SCHEMA, [
+                    'schema_version' => ['type' => 'int32', 'tag' => 1],
+                    'run_id' => ['type' => 'string', 'tag' => 2],
+                    'worker_id' => ['type' => 'string', 'tag' => 3],
+                    'events' => ['type' => 'repeated_' . self::RUN_EVENT_SCHEMA, 'tag' => 4],
+                    'first_sequence' => ['type' => 'int64', 'tag' => 5],
+                    'last_sequence' => ['type' => 'int64', 'tag' => 6],
                 ]);
             }
         }
@@ -913,6 +1328,25 @@ namespace Training {
             }
 
             return 'training-' . self::sanitizeKind($kind) . '-sha256-' . hash('sha256', $uri);
+        }
+
+        public static function controlObjectId(string $family, string ...$parts): string
+        {
+            $family = self::sanitizeKind($family);
+            $encodedParts = array_map(
+                static fn(string $part): string => rawurlencode($part),
+                array_filter($parts, static fn(string $part): bool => $part !== '')
+            );
+            $candidate = $family;
+            if ($encodedParts !== []) {
+                $candidate .= '!' . implode('!', $encodedParts);
+            }
+
+            if (strlen($candidate) <= self::MAX_OBJECT_ID_BYTES && self::isValidNativeObjectId($candidate)) {
+                return $candidate;
+            }
+
+            return $family . '-sha256-' . hash('sha256', implode("\0", $parts));
         }
 
         private static function sanitizeKind(string $kind): string

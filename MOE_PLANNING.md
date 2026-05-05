@@ -13,6 +13,12 @@ binds a local `king.training.distributed.agent_worker` handler, claims a
 rendezvous lease, runs its local GPU backend, writes checkpoint shards through
 object store, and reports status over websocket/IIBIN events.
 
+The current branch now has a contracted `king.training.network.v1` summary from
+`TrainingRun::coordinateAcross()`. It proves the intended non-centralized shape:
+controller as control plane, GPU servers as execution owners, object-store CAS
+objects for rendezvous/checkpoints, and websocket/IIBIN event streams for
+status.
+
 ## Proposed Scope
 
 Implement a new userland training package under `demo/userland/training-php/`:

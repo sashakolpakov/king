@@ -26,6 +26,10 @@ Additional implementation notes:
 - Logical `king://` URIs are mapped to native-safe flat object IDs before object-store writes.
 - WebSocket/IIBIN watch transport and pipeline-orchestrator worker APIs are represented in the emitted plan.
 - `watch()` remains nonblocking and returns a planned-event snapshot until a real scheduler backend is connected.
+- `TrainingRun::coordinateAcross()` now emits a `king.training.network.v1`
+  network summary for a small fleet of King-coordinated GPU servers, including
+  admission state, rank leases, heartbeat object IDs, orchestrator steps,
+  websocket/IIBIN event-frame metadata, and checkpoint shard ownership.
 
 ## Requested API Shape
 
@@ -123,3 +127,9 @@ The CI PHPT wrapper is:
 php extension/run-tests.php -q extension/tests/743-training-moe-dsl-contract.phpt
 ```
 
+The distributed GPU network contract is:
+
+```sh
+php demo/userland/training-php/tests/moe-distributed-network-contract.php
+php extension/run-tests.php -q extension/tests/754-training-moe-distributed-network-contract.phpt
+```

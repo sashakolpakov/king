@@ -153,6 +153,34 @@ admission intent, not as proof that those ranks already exist. The backend
 adapter must admit the run only after enough GPU workers have joined and passed
 capability checks.
 
+The userland contract exposes this through:
+
+```php
+$network = $run->coordinateAcross([
+    Training\Workers::gpuServer('gpu-a')
+        ->host('gpu-a.internal')
+        ->websocket('wss://gpu-a.internal/king/training')
+        ->rack('rack-a')
+        ->gpus(2)
+        ->rankSlots(4)
+        ->gpuMemoryGb(80)
+        ->backend('king-nccl-worker'),
+    // more GPU servers...
+]);
+```
+
+`coordinateAcross()` produces a `king.training.network.v1` summary with:
+
+- admission state and admitted rank count
+- per-worker rank assignment
+- object-store rank-claim and heartbeat IDs
+- pipeline-orchestrator worker steps
+- websocket/IIBIN event endpoint metadata
+- checkpoint manifest and shard ownership
+
+The contract deliberately marks `centralized_compute = false`: the controller
+is a control-plane participant only, while GPU servers own numeric execution.
+
 ## Generated Contract
 
 `start()` emits:
@@ -189,6 +217,7 @@ schemas are:
 
 - `KingTrainingRunEnvelopeV1`
 - `KingTrainingRunEventV1`
+- `KingTrainingRunEventBatchV1`
 
 Runtime schemas use `tag`, not `field_number`, because the native IIBIN schema
 validator requires positive `tag` metadata.
@@ -196,6 +225,18 @@ validator requires positive `tag` metadata.
 IIBIN batches are bounded by the native limit of `65536` records. Token,
 event, and status flows must chunk before that limit instead of treating batch
 encode/decode as an unbounded stream.
+
+Training websocket frames also use a smaller operational event-frame cap:
+
+- `1024` events per training event frame
+- `1 MiB` maximum payload
+- per-worker monotonic sequence scope
+- big-endian frame header metadata
+- reserved bytes must remain zero
+
+WebSocket/IIBIN is for control, status, metrics, and failure events. Tensor,
+gradient, and checkpoint payloads stay out of websocket frames and move through
+the training backend or object store.
 
 The implementation gracefully falls back to an unencoded payload when the King
 extension is not loaded, so local PHP contracts can run without native modules.
@@ -225,6 +266,19 @@ training-<kind>-sha256-<hash>
 Run plan creation uses object-store create semantics with `if_none_match => '*'`
 when the native extension is available. Future updates should use ETag and
 version preconditions, mirroring the Flow control-plane/checkpoint pattern.
+
+Distributed network coordination uses versioned flat object IDs:
+
+```text
+moe-rdzv-v1!<runId>
+moe-rank-claim-v1!<runId>!rank-<n>
+moe-heartbeat-v1!<runId>!<workerId>
+moe-checkpoint-manifest-v1!<runId>
+moe-checkpoint-shard-v1!<runId>!rank-<n>!latest
+```
+
+Rank claims use create-only preconditions. Heartbeat and manifest updates are
+modeled as CAS updates with `if_match + expected_version`.
 
 ## WebSocket Contracts
 
@@ -262,6 +316,10 @@ tool handlers before claiming training control work. The plan records this as:
 ```text
 handler_boundary = process_local_rebind_required
 ```
+
+The distributed network summary emits one orchestrator step per admitted GPU
+worker, each carrying the worker ID, assigned ranks, backend name, websocket
+endpoint, and durable tool name. It does not serialize PHP callables.
 
 ## Current Limitations
 
