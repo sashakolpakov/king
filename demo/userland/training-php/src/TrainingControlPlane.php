@@ -46,6 +46,7 @@ namespace {
 namespace Training {
     use InvalidArgumentException;
     use JsonException;
+    use Throwable;
 
     interface PlanSection
     {
@@ -814,13 +815,24 @@ namespace Training {
             }
 
             $body = $envelope['encoded'] === true ? $envelope['binary'] : self::json($envelope['payload']);
-            \king_object_store_put($objectId, $body, [
-                'content_type' => $envelope['encoded'] === true
-                    ? 'application/vnd.king.training.run+iibin'
-                    : 'application/vnd.king.training.run+json',
-                'object_type' => 'king.training.distributed.plan',
-                'if_none_match' => '*',
-            ]);
+            try {
+                \king_object_store_put($objectId, $body, [
+                    'content_type' => $envelope['encoded'] === true
+                        ? 'application/vnd.king.training.run+iibin'
+                        : 'application/vnd.king.training.run+json',
+                    'object_type' => 'king.training.distributed.plan',
+                    'if_none_match' => '*',
+                ]);
+            } catch (Throwable $exception) {
+                return [
+                    'object_id' => $objectId,
+                    'stored' => false,
+                    'runtime' => 'king_object_store',
+                    'write_api' => 'king_object_store_put',
+                    'unavailable' => true,
+                    'diagnostic' => $exception->getMessage(),
+                ];
+            }
 
             return [
                 'object_id' => $objectId,

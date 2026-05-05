@@ -167,6 +167,7 @@ assert_same('moe-pretrain-run-2026-05-04', $envelope['payload']['run_id'], 'enve
 assert_same('training-run!runs!moe-pretrain-run-2026-05-04!plan.iibin', $persistence['object_id'], 'persistence object id mismatch');
 assert_same('king_object_store', $persistence['runtime'], 'persistence runtime mismatch');
 assert_same('king_object_store_put', $persistence['write_api'], 'persistence write API mismatch');
+assert_true(array_key_exists('stored', $persistence), 'persistence result must report stored state');
 
 $invalidUriRejected = false;
 try {
