@@ -181,6 +181,35 @@ $network = $run->coordinateAcross([
 The contract deliberately marks `centralized_compute = false`: the controller
 is a control-plane participant only, while GPU servers own numeric execution.
 
+## Critical Architecture Notes
+
+The design is intentionally not a replacement for NCCL, CUDA kernels, or a
+model-runtime scheduler. It is a King-native coordination layer that can make a
+small GPU fleet behave like one controlled training system. The strongest parts
+of the current shape are durable run state, versioned object-store rendezvous
+objects, explicit worker admission, and bounded websocket/IIBIN event streams.
+
+The main risks are:
+
+- Admission must not accept workers just because they are listed. It must check
+  rank capacity, GPU memory, NCCL, object-store, IIBIN, websocket capability,
+  and rack-spread requirements.
+- Rank assignment must not fill one server before using the next server. The
+  current contract uses balanced round-robin assignment across admitted
+  workers, respecting each worker's rank-slot limit.
+- WebSocket must stay out of the tensor path. It is only for control, status,
+  metrics, and failure events.
+- Object-store rendezvous state must use CAS and fencing tokens. Stale rank
+  stealing must be based on lease payload and preconditioned writes, not on
+  object expiration cleanup alone.
+- The orchestrator boundary must remain durable tool names only. Worker
+  processes still have to bind process-local handlers before claiming work.
+- Elastic ranks need scheduler admission. `elasticRanks(min, max)` is intent,
+  not proof that all ranks are available or useful.
+
+The current branch now models these rules in the `king.training.network.v1`
+summary, but it still does not execute a training step.
+
 ## Generated Contract
 
 `start()` emits:

@@ -471,6 +471,7 @@ namespace Training {
                 'type' => 'distributed',
                 'node_pool' => Validation::required($this->nodePool, 'node pool'),
                 'gpu_memory' => Validation::required($this->gpuMemory, 'GPU memory requirement'),
+                'gpu_memory_gb_min' => Validation::gpuMemoryGbMin((string) Validation::required($this->gpuMemory, 'GPU memory requirement')),
                 'spread_across_racks' => $this->spreadAcrossRacks,
                 'co_locate_hot_experts' => $this->coLocateHotExperts,
             ];
@@ -1005,11 +1006,22 @@ namespace Training {
             }
 
             $workerRows = [];
+            $workerIds = [];
+            $workerWebsockets = [];
             foreach ($workers as $worker) {
                 if (!$worker instanceof GpuWorkerSpec) {
                     throw new InvalidArgumentException('workers must be Training\\GpuWorkerSpec instances.');
                 }
-                $workerRows[] = $worker->toArray();
+                $row = $worker->toArray();
+                if (isset($workerIds[$row['id']])) {
+                    throw new InvalidArgumentException('GPU worker IDs must be unique.');
+                }
+                if (isset($workerWebsockets[$row['websocket']])) {
+                    throw new InvalidArgumentException('GPU worker websocket endpoints must be unique.');
+                }
+                $workerIds[$row['id']] = true;
+                $workerWebsockets[$row['websocket']] = true;
+                $workerRows[] = $row;
             }
 
             return new self($run->plan(), $workerRows);
@@ -1064,14 +1076,15 @@ namespace Training {
             $totalSlots = array_sum(array_map(static fn(array $worker): int => (int) $worker['rank_slots'], $this->workers));
             $totalGpus = array_sum(array_map(static fn(array $worker): int => (int) $worker['gpus'], $this->workers));
             $racks = array_values(array_unique(array_filter(array_map(static fn(array $worker): ?string => $worker['rack'] ?? null, $this->workers))));
-            $ncclReady = array_values(array_filter($this->workers, static fn(array $worker): bool => ($worker['capabilities']['nccl'] ?? false) === true));
             $elastic = $this->plan['failure_policy']['elastic_ranks'] ?? ['min' => 1, 'max' => $totalSlots];
             $minRanks = (int) ($elastic['min'] ?? 1);
             $maxRanks = (int) ($elastic['max'] ?? $totalSlots);
             $admittedRanks = min($totalSlots, $maxRanks);
-            $admitted = $totalSlots >= $minRanks && count($ncclReady) === count($this->workers) && count($this->workers) >= 2;
             $runId = (string) $this->plan['run_id'];
             $rendezvousPrefix = (string) ($this->plan['execution']['rendezvous_object_prefix'] ?? ObjectStoreUriMapper::objectId('king://runs/' . $runId . '/rdzv', 'rendezvous'));
+            $capability = $this->capabilityAdmission($minRanks, $racks);
+            $admitted = $capability['blockers'] === [];
+            $rankAssignments = $admitted ? $this->rankAssignments($admittedRanks) : [];
 
             return [
                 'contract' => 'king.training.network.v1',
@@ -1091,8 +1104,14 @@ namespace Training {
                     'min_ranks' => $minRanks,
                     'max_ranks' => $maxRanks,
                     'admitted_ranks' => $admitted ? $admittedRanks : 0,
+                    'rank_assignment_strategy' => 'balanced_round_robin',
                     'requires_all_workers_nccl' => true,
                     'requires_at_least_two_workers' => true,
+                    'requires_object_store' => true,
+                    'requires_iibin' => true,
+                    'requires_websocket' => true,
+                    'required_gpu_memory_gb' => $capability['required_gpu_memory_gb'],
+                    'blockers' => $capability['blockers'],
                 ],
                 'workers' => $this->workers,
                 'rendezvous' => [
@@ -1101,14 +1120,14 @@ namespace Training {
                     'lease_content_type' => 'application/vnd.king.training-rank-lease+json',
                     'claim_precondition' => 'if_none_match=*',
                     'heartbeat_update_precondition' => 'if_match+expected_version',
-                    'rank_leases' => $this->rankLeasesFor($admitted ? $admittedRanks : 0, $rendezvousPrefix),
+                    'rank_leases' => $this->rankLeasesFor($rankAssignments),
                 ],
                 'orchestrator' => [
                     'runtime' => 'king_pipeline_orchestrator',
                     'tool' => (string) $this->plan['execution']['orchestrator']['tool'],
                     'dispatch_api' => 'king_pipeline_orchestrator_dispatch',
                     'worker_api' => 'king_pipeline_orchestrator_worker_run_next',
-                    'steps' => $this->orchestratorStepsFor($admitted ? $admittedRanks : 0),
+                    'steps' => $this->orchestratorStepsFor($rankAssignments),
                 ],
                 'events' => [
                     'transport' => 'websocket',
@@ -1121,19 +1140,21 @@ namespace Training {
                     'binary_frame' => WireContracts::trainingEventFrameContract(),
                     'worker_endpoints' => array_column($this->workers, 'websocket', 'id'),
                 ],
-                'checkpoint_manifest' => $this->checkpointManifestFor($admitted ? $admittedRanks : 0),
+                'checkpoint_manifest' => $this->checkpointManifestFor($rankAssignments),
             ];
         }
 
         /**
+         * @param list<array{rank:int,worker:array<string,mixed>}> $assignments
          * @return list<array<string,mixed>>
          */
-        private function rankLeasesFor(int $rankCount, string $rendezvousPrefix): array
+        private function rankLeasesFor(array $assignments): array
         {
             $leases = [];
             $runId = (string) $this->plan['run_id'];
-            for ($rank = 0; $rank < $rankCount; $rank++) {
-                $worker = $this->workerForRank($rank);
+            foreach ($assignments as $assignment) {
+                $rank = $assignment['rank'];
+                $worker = $assignment['worker'];
                 $leases[] = [
                     'rank' => $rank,
                     'worker_id' => $worker['id'],
@@ -1150,18 +1171,17 @@ namespace Training {
         }
 
         /**
+         * @param list<array{rank:int,worker:array<string,mixed>}> $assignments
          * @return list<array<string,mixed>>
          */
-        private function orchestratorStepsFor(int $rankCount): array
+        private function orchestratorStepsFor(array $assignments): array
         {
             $steps = [];
             foreach ($this->workers as $worker) {
-                $rankIds = [];
-                for ($rank = 0; $rank < $rankCount; $rank++) {
-                    if ($this->workerForRank($rank)['id'] === $worker['id']) {
-                        $rankIds[] = $rank;
-                    }
-                }
+                $rankIds = array_values(array_map(
+                    static fn(array $assignment): int => $assignment['rank'],
+                    array_filter($assignments, static fn(array $assignment): bool => $assignment['worker']['id'] === $worker['id'])
+                ));
 
                 if ($rankIds === []) {
                     continue;
@@ -1181,15 +1201,17 @@ namespace Training {
         }
 
         /**
+         * @param list<array{rank:int,worker:array<string,mixed>}> $assignments
          * @return array<string,mixed>
          */
-        private function checkpointManifestFor(int $rankCount): array
+        private function checkpointManifestFor(array $assignments): array
         {
             $targetPrefix = (string) $this->plan['checkpointing']['target_object_prefix'];
             $runId = (string) $this->plan['run_id'];
             $shards = [];
-            for ($rank = 0; $rank < $rankCount; $rank++) {
-                $worker = $this->workerForRank($rank);
+            foreach ($assignments as $assignment) {
+                $rank = $assignment['rank'];
+                $worker = $assignment['worker'];
                 $shards[] = [
                     'rank' => $rank,
                     'worker_id' => $worker['id'],
@@ -1209,20 +1231,70 @@ namespace Training {
         }
 
         /**
-         * @return array<string,mixed>
+         * @param list<string> $racks
+         * @return array{required_gpu_memory_gb:int|null,blockers:list<string>}
          */
-        private function workerForRank(int $rank): array
+        private function capabilityAdmission(int $minRanks, array $racks): array
         {
-            $offset = 0;
-            foreach ($this->workers as $worker) {
-                $slots = (int) $worker['rank_slots'];
-                if ($rank < $offset + $slots) {
-                    return $worker;
-                }
-                $offset += $slots;
+            $blockers = [];
+            $placement = is_array($this->plan['placement'] ?? null) ? $this->plan['placement'] : [];
+            $requiredGpuMemoryGb = isset($placement['gpu_memory_gb_min']) ? (int) $placement['gpu_memory_gb_min'] : null;
+
+            if (count($this->workers) < 2) {
+                $blockers[] = 'at_least_two_workers_required';
+            }
+            if (array_sum(array_map(static fn(array $worker): int => (int) $worker['rank_slots'], $this->workers)) < $minRanks) {
+                $blockers[] = 'not_enough_rank_slots';
+            }
+            if (($placement['spread_across_racks'] ?? false) === true && count($racks) < 2) {
+                $blockers[] = 'rack_spread_required';
             }
 
-            return $this->workers[array_key_last($this->workers)];
+            foreach ($this->workers as $worker) {
+                $capabilities = is_array($worker['capabilities'] ?? null) ? $worker['capabilities'] : [];
+                foreach (['nccl', 'object_store', 'iibin', 'websocket'] as $capability) {
+                    if (($capabilities[$capability] ?? false) !== true) {
+                        $blockers[] = 'worker_' . $worker['id'] . '_missing_' . $capability;
+                    }
+                }
+                if ($requiredGpuMemoryGb !== null && (int) $worker['gpu_memory_gb'] < $requiredGpuMemoryGb) {
+                    $blockers[] = 'worker_' . $worker['id'] . '_insufficient_gpu_memory';
+                }
+            }
+
+            return [
+                'required_gpu_memory_gb' => $requiredGpuMemoryGb,
+                'blockers' => array_values(array_unique($blockers)),
+            ];
+        }
+
+        /**
+         * @return list<array{rank:int,worker:array<string,mixed>}>
+         */
+        private function rankAssignments(int $rankCount): array
+        {
+            $remaining = [];
+            foreach ($this->workers as $index => $worker) {
+                $remaining[$index] = (int) $worker['rank_slots'];
+            }
+
+            $assignments = [];
+            $workerIndex = 0;
+            for ($rank = 0; $rank < $rankCount; $rank++) {
+                $attempts = 0;
+                while ($remaining[$workerIndex] <= 0 && $attempts <= count($this->workers)) {
+                    $workerIndex = ($workerIndex + 1) % count($this->workers);
+                    $attempts++;
+                }
+                $assignments[] = [
+                    'rank' => $rank,
+                    'worker' => $this->workers[$workerIndex],
+                ];
+                $remaining[$workerIndex]--;
+                $workerIndex = ($workerIndex + 1) % count($this->workers);
+            }
+
+            return $assignments;
         }
     }
 
@@ -1411,6 +1483,19 @@ namespace Training {
             }
 
             return $value;
+        }
+
+        public static function gpuMemoryGbMin(string $requirement): ?int
+        {
+            if (preg_match('/>=\s*([0-9]+)\s*GB/i', $requirement, $matches)) {
+                return (int) $matches[1];
+            }
+
+            if (preg_match('/^([0-9]+)\s*GB$/i', trim($requirement), $matches)) {
+                return (int) $matches[1];
+            }
+
+            return null;
         }
     }
 }

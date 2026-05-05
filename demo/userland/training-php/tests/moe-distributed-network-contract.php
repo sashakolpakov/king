@@ -122,8 +122,14 @@ assert_same('accepted', $summary['admission']['state'], 'admission state mismatc
 assert_same(6, $summary['admission']['min_ranks'], 'min ranks mismatch');
 assert_same(12, $summary['admission']['max_ranks'], 'max ranks mismatch');
 assert_same(12, $summary['admission']['admitted_ranks'], 'admitted ranks mismatch');
+assert_same('balanced_round_robin', $summary['admission']['rank_assignment_strategy'], 'rank assignment strategy mismatch');
+assert_same(80, $summary['admission']['required_gpu_memory_gb'], 'required GPU memory mismatch');
+assert_same([], $summary['admission']['blockers'], 'admission blockers mismatch');
 assert_true($summary['admission']['requires_all_workers_nccl'], 'NCCL admission requirement missing');
 assert_true($summary['admission']['requires_at_least_two_workers'], 'distributed admission requirement missing');
+assert_true($summary['admission']['requires_object_store'], 'object-store admission requirement missing');
+assert_true($summary['admission']['requires_iibin'], 'IIBIN admission requirement missing');
+assert_true($summary['admission']['requires_websocket'], 'websocket admission requirement missing');
 
 assert_same('king_object_store', $summary['rendezvous']['store'], 'rendezvous store mismatch');
 assert_same('if_none_match=*', $summary['rendezvous']['claim_precondition'], 'rendezvous claim precondition mismatch');
@@ -147,11 +153,11 @@ assert_same('king_pipeline_orchestrator_dispatch', $summary['orchestrator']['dis
 assert_same('king_pipeline_orchestrator_worker_run_next', $summary['orchestrator']['worker_api'], 'orchestrator worker API mismatch');
 assert_same(3, count($steps), 'orchestrator step count mismatch');
 assert_same('gpu-a', $steps[0]['worker_id'], 'first step worker mismatch');
-assert_same([0, 1, 2, 3], $steps[0]['rank_ids'], 'first step ranks mismatch');
+assert_same([0, 3, 6, 9], $steps[0]['rank_ids'], 'first step ranks mismatch');
 assert_same('gpu-b', $steps[1]['worker_id'], 'second step worker mismatch');
-assert_same([4, 5, 6, 7], $steps[1]['rank_ids'], 'second step ranks mismatch');
+assert_same([1, 4, 7, 10], $steps[1]['rank_ids'], 'second step ranks mismatch');
 assert_same('gpu-c', $steps[2]['worker_id'], 'third step worker mismatch');
-assert_same([8, 9, 10, 11], $steps[2]['rank_ids'], 'third step ranks mismatch');
+assert_same([2, 5, 8, 11], $steps[2]['rank_ids'], 'third step ranks mismatch');
 
 assert_same('websocket', $summary['events']['transport'], 'event transport mismatch');
 assert_same('iibin', $summary['events']['frame_codec'], 'event frame codec mismatch');
@@ -187,5 +193,49 @@ $insufficient = $run->coordinateAcross([
         ->backend('king-nccl-worker'),
 ])->summary();
 assert_same('insufficient_capacity', $insufficient['admission']['state'], 'single-server admission must fail distributed requirement');
+assert_true(in_array('at_least_two_workers_required', $insufficient['admission']['blockers'], true), 'single-server blocker missing');
+
+$weakGpu = $run->coordinateAcross([
+    Training\Workers::gpuServer('gpu-a')
+        ->host('gpu-a.internal')
+        ->websocket('wss://gpu-a.internal/king/training')
+        ->rack('rack-a')
+        ->gpus(2)
+        ->rankSlots(4)
+        ->gpuMemoryGb(80)
+        ->backend('king-nccl-worker'),
+    Training\Workers::gpuServer('gpu-weak')
+        ->host('gpu-weak.internal')
+        ->websocket('wss://gpu-weak.internal/king/training')
+        ->rack('rack-b')
+        ->gpus(2)
+        ->rankSlots(4)
+        ->gpuMemoryGb(40)
+        ->backend('king-nccl-worker'),
+])->summary();
+assert_same('insufficient_capacity', $weakGpu['admission']['state'], 'weak GPU admission must fail memory requirement');
+assert_true(in_array('worker_gpu-weak_insufficient_gpu_memory', $weakGpu['admission']['blockers'], true), 'weak GPU blocker missing');
+
+$missingNccl = $run->coordinateAcross([
+    Training\Workers::gpuServer('gpu-a')
+        ->host('gpu-a.internal')
+        ->websocket('wss://gpu-a.internal/king/training')
+        ->rack('rack-a')
+        ->gpus(3)
+        ->rankSlots(6)
+        ->gpuMemoryGb(80)
+        ->backend('king-nccl-worker'),
+    Training\Workers::gpuServer('gpu-no-nccl')
+        ->host('gpu-no-nccl.internal')
+        ->websocket('wss://gpu-no-nccl.internal/king/training')
+        ->rack('rack-b')
+        ->gpus(3)
+        ->rankSlots(6)
+        ->gpuMemoryGb(80)
+        ->backend('king-local-worker')
+        ->withoutNccl(),
+])->summary();
+assert_same('insufficient_capacity', $missingNccl['admission']['state'], 'missing NCCL admission must fail');
+assert_true(in_array('worker_gpu-no-nccl_missing_nccl', $missingNccl['admission']['blockers'], true), 'missing NCCL blocker absent');
 
 echo "moe distributed network contract ok\n";
