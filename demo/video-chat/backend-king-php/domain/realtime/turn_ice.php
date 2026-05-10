@@ -20,7 +20,7 @@ function videochat_turn_default_stun_uris(): array
     if ($publicHost !== '') {
         $candidates[] = preg_match('/^(localhost|[0-9.]+)$/', $publicHost) === 1 || str_contains($publicHost, ':')
             ? $publicHost
-            : 'turn.' . preg_replace('/^(api|ws|sfu|cdn|cnd|turn)\./i', '', $publicHost);
+            : 'turn.' . preg_replace('/^(api|ws|cdn|cnd|turn)\./i', '', $publicHost);
     }
 
     $uris = [];

@@ -90,7 +90,7 @@ videochat_gossipmesh_room_state_assert(count($topology['admitted_peers'] ?? []) 
 videochat_gossipmesh_room_state_assert(count($topology['assigned_neighbors'] ?? []) === 2, 'snapshot topology must include bounded assigned neighbors for the viewer');
 videochat_gossipmesh_room_state_assert(($topology['capabilities']['bounded_neighbors'] ?? false) === true, 'snapshot topology must advertise bounded-neighbor capability');
 videochat_gossipmesh_room_state_assert(($topology['transport_candidates'][0]['transport'] ?? '') === 'rtc_datachannel', 'snapshot topology must include RTC data-channel transport candidates');
-videochat_gossipmesh_room_state_assert(($topology['transport_candidates'][1]['purpose'] ?? '') === 'fallback_relay_recording', 'snapshot topology must keep SFU fallback/relay/recording as optional transport metadata');
+videochat_gossipmesh_room_state_assert(count($topology['transport_candidates'] ?? []) === 1, 'snapshot topology must advertise only bounded gossip transport metadata');
 
 $joinEvent = videochat_gossipmesh_room_state_last_frame($frames, 'socket-101', 'room/joined');
 $joinHints = is_array($joinEvent['gossip_topology_by_peer_id'] ?? null) ? $joinEvent['gossip_topology_by_peer_id'] : [];

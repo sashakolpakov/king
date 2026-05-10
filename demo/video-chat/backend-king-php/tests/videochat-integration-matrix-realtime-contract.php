@@ -249,13 +249,13 @@ SQL
     videochat_integration_realtime_assert(!(bool) ($missingLiveness['ok'] ?? true), 'missing session should fail realtime liveness');
     videochat_integration_realtime_assert((string) ($missingLiveness['reason'] ?? '') === 'missing_session', 'missing session liveness reason mismatch');
 
-    $admissionRoomId = 'sfu-admission-room';
-    $admissionCallId = 'sfu-admission-call';
+    $admissionRoomId = 'media-admission-room';
+    $admissionCallId = 'media-admission-call';
     $nowIso = gmdate('c', $now);
     $pdo->prepare(
         <<<'SQL'
 INSERT INTO rooms(id, name, visibility, status, created_by_user_id, created_at, updated_at)
-VALUES(:id, 'SFU Admission Room', 'private', 'active', :owner_user_id, :created_at, :updated_at)
+VALUES(:id, 'Media Admission Room', 'private', 'active', :owner_user_id, :created_at, :updated_at)
 SQL
     )->execute([
         ':id' => $admissionRoomId,
@@ -266,7 +266,7 @@ SQL
     $pdo->prepare(
         <<<'SQL'
 INSERT INTO calls(id, room_id, title, owner_user_id, status, starts_at, ends_at, created_at, updated_at)
-VALUES(:id, :room_id, 'SFU Admission Call', :owner_user_id, 'active', :starts_at, :ends_at, :created_at, :updated_at)
+VALUES(:id, :room_id, 'Media Admission Call', :owner_user_id, 'active', :starts_at, :ends_at, :created_at, :updated_at)
 SQL
     )->execute([
         ':id' => $admissionCallId,
@@ -305,14 +305,14 @@ SQL
         return $pdo;
     };
     videochat_integration_realtime_assert(
-        videochat_realtime_user_has_sfu_room_admission(
+        videochat_realtime_user_has_media_room_admission(
             $openAdmissionDatabase,
             $userUserId,
             'user',
             $admissionRoomId,
             $admissionCallId
         ),
-        'SFU admission should accept DB-admitted call participants without process-local /ws presence'
+        'Media admission should accept DB-admitted call participants without process-local /ws presence'
     );
     $pdo->prepare(
         "UPDATE call_participants SET invite_state = 'pending', joined_at = NULL WHERE call_id = :call_id AND user_id = :user_id"
@@ -321,14 +321,14 @@ SQL
         ':user_id' => $userUserId,
     ]);
     videochat_integration_realtime_assert(
-        !videochat_realtime_user_has_sfu_room_admission(
+        !videochat_realtime_user_has_media_room_admission(
             $openAdmissionDatabase,
             $userUserId,
             'user',
             $admissionRoomId,
             $admissionCallId
         ),
-        'SFU admission must still reject pending lobby participants'
+        'Media admission must still reject pending lobby participants'
     );
 
     $closeAuthBackend = videochat_realtime_close_descriptor_for_reason('auth_backend_error');
@@ -341,10 +341,13 @@ SQL
     videochat_integration_realtime_assert((string) ($closeRevoked['close_reason'] ?? '') === 'session_invalidated', 'revoked close reason mismatch');
     videochat_integration_realtime_assert((string) ($closeRevoked['close_category'] ?? '') === 'policy', 'revoked close category mismatch');
 
+    $issueSessionId = static fn (): string => 'sess_unused_realtime_contract';
+
     $invalidMethodResponse = videochat_handle_realtime_routes(
         $wsPath,
         [...$validRequest, 'method' => 'POST'],
         $wsPath,
+        [],
         $activeWebsocketsBySession,
         $presenceState,
         $lobbyState,
@@ -355,7 +358,8 @@ SQL
         $rbacFailureResponse,
         $jsonResponse,
         $errorResponse,
-        $openDatabase
+        $openDatabase,
+        $issueSessionId
     );
     videochat_integration_realtime_assert((int) ($invalidMethodResponse['status'] ?? 0) === 405, 'invalid websocket method should fail with 405');
     videochat_integration_realtime_assert($authCallCount === 0, 'auth callback must not run for invalid websocket method');
@@ -371,6 +375,7 @@ SQL
             ],
         ],
         $wsPath,
+        [],
         $activeWebsocketsBySession,
         $presenceState,
         $lobbyState,
@@ -381,7 +386,8 @@ SQL
         $rbacFailureResponse,
         $jsonResponse,
         $errorResponse,
-        $openDatabase
+        $openDatabase,
+        $issueSessionId
     );
     videochat_integration_realtime_assert((int) ($missingUpgradeResponse['status'] ?? 0) === 400, 'missing websocket upgrade should fail with 400');
     videochat_integration_realtime_assert($authCallCount === 0, 'auth callback must not run for missing websocket upgrade');
@@ -400,6 +406,7 @@ SQL
             ],
         ],
         $wsPath,
+        [],
         $activeWebsocketsBySession,
         $presenceState,
         $lobbyState,
@@ -410,7 +417,8 @@ SQL
         $rbacFailureResponse,
         $jsonResponse,
         $errorResponse,
-        $openDatabase
+        $openDatabase,
+        $issueSessionId
     );
     videochat_integration_realtime_assert((int) ($missingSessionResponse['status'] ?? 0) === 401, 'missing websocket session should fail with 401');
     $missingSessionBody = videochat_integration_realtime_decode($missingSessionResponse);
@@ -438,6 +446,7 @@ SQL
             ],
         ],
         $wsPath,
+        [],
         $activeWebsocketsBySession,
         $presenceState,
         $lobbyState,
@@ -448,7 +457,8 @@ SQL
         $rbacFailureResponse,
         $jsonResponse,
         $errorResponse,
-        $openDatabase
+        $openDatabase,
+        $issueSessionId
     );
     videochat_integration_realtime_assert((int) ($revokedSessionResponse['status'] ?? 0) === 401, 'revoked websocket session should fail with 401');
     $revokedSessionBody = videochat_integration_realtime_decode($revokedSessionResponse);
@@ -476,6 +486,7 @@ SQL
             ],
         ],
         $wsPath,
+        [],
         $activeWebsocketsBySession,
         $presenceState,
         $lobbyState,
@@ -486,7 +497,8 @@ SQL
         $rbacFailureResponse,
         $jsonResponse,
         $errorResponse,
-        $openDatabase
+        $openDatabase,
+        $issueSessionId
     );
     videochat_integration_realtime_assert((int) ($expiredSessionResponse['status'] ?? 0) === 401, 'expired websocket session should fail with 401');
     $expiredSessionBody = videochat_integration_realtime_decode($expiredSessionResponse);

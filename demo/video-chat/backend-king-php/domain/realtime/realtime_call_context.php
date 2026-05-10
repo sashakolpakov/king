@@ -491,7 +491,7 @@ function videochat_realtime_is_user_moderator_for_room(
     return (bool) ($context['can_moderate'] ?? false);
 }
 
-function videochat_realtime_user_has_sfu_room_admission(
+function videochat_realtime_user_has_media_room_admission(
     callable $openDatabase,
     int $userId,
     string $role,

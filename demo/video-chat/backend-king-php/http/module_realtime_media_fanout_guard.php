@@ -14,8 +14,7 @@ function videochat_realtime_normal_media_fanout_types(): array
         'gossip/frame',
         'gossip/media',
         'gossip/media-frame',
-        'sfu/frame',
-        'sfu/frame-chunk',
+        'gossip/video-frame',
     ];
 }
 
@@ -111,7 +110,7 @@ function videochat_realtime_guard_no_normal_media_fanout(
                 'type' => (string) ($classification['type'] ?? ''),
                 'room_id' => (string) ($presenceConnection['room_id'] ?? 'lobby'),
                 'call_id' => videochat_realtime_connection_call_id($presenceConnection),
-                'allowed_media_paths' => ['sfu_gateway_fallback_relay_recording', 'bounded_gossip_peer_links'],
+                'allowed_media_paths' => ['bounded_gossip_peer_links'],
             ],
             'time' => gmdate('c'),
         ],

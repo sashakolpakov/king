@@ -22,7 +22,7 @@ export interface OpsMessage {
 }
 
 export interface DataMessage {
-  type: 'sfu/frame'
+  type: 'gossip/video-frame'
   publisher_id: string
   track_id: string
   frame_type: 'keyframe' | 'delta'

@@ -212,7 +212,7 @@ function videochat_activity_score_from_command(array $command): array
         'motion_score' => $motionScore,
         'gesture_score' => $gestureScore,
         'is_speaking' => $isSpeaking,
-        'source' => in_array((string) ($command['source'] ?? ''), ['sfu_observed', 'webrtc_stats', 'client_observed'], true)
+        'source' => in_array((string) ($command['source'] ?? ''), ['server_observed', 'webrtc_stats', 'client_observed'], true)
             ? (string) ($command['source'] ?? 'client_observed')
             : 'client_observed',
     ];

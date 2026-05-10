@@ -1,5 +1,5 @@
 import { reactive } from 'vue';
-import { arrayBufferToBase64Url } from '../../../lib/sfu/framePayload';
+import { arrayBufferToBase64Url } from '../../../lib/media/base64Payload';
 import { GOSSIP_DATA_LANE_CONFIG, VIDEOCHAT_MEDIA_CARRIER_CONFIG } from '../../../lib/gossipmesh/featureFlags';
 import { GossipController, type GossipDelivery, type GossipFrameMessage } from '../../../lib/gossipmesh/gossipController';
 import { GossipDirectTransport } from '../../../lib/gossipmesh/directGossipTransport';
@@ -623,7 +623,7 @@ export function createSputnikPeerRuntime(options: SputnikRuntimeOptions) {
     controller.addPeer(peer.definition.peerId);
     controller.onDataMessage((delivery: GossipDelivery) => {
       state.receivedFrames += 1;
-      if (delivery.message?.type === 'sfu/frame') {
+      if (delivery.message?.type === 'gossip/video-frame') {
         controller.recordTransportTelemetry?.(peer.definition.peerId, 'received', 1);
       }
     });
@@ -752,7 +752,7 @@ export function createSputnikPeerRuntime(options: SputnikRuntimeOptions) {
     const dataBuffer = dataBufferFromFrame(frame);
     const dataBase64 = dataBuffer.byteLength > 0 ? arrayBufferToBase64Url(dataBuffer) : '';
     const message: GossipFrameMessage = {
-      type: 'sfu/frame',
+      type: 'gossip/video-frame',
       protocol_version: 2,
       publisher_id: peer.definition.peerId,
       publisher_user_id: peer.definition.peerId,
@@ -763,7 +763,7 @@ export function createSputnikPeerRuntime(options: SputnikRuntimeOptions) {
       media_generation: SPUTNIK_MEDIA_GENERATION,
       sender_sent_at_ms: Date.now(),
       codec_id: String(frame.codecId || ''),
-      runtime_id: String(frame.runtimeId || 'wlvc_sfu'),
+      runtime_id: String(frame.runtimeId || 'wlvc_gossip'),
       protection_mode: 'transport_only',
       data_base64: dataBase64,
       payload_chars: dataBase64.length,

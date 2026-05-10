@@ -23,6 +23,7 @@ const GOSSIP_DATA_LANE_ENV_KEY = 'VITE_VIDEOCHAT_GOSSIP_DATA_LANE'
 
 function normalizeGossipDataLaneMode(value: unknown): GossipDataLaneMode {
   const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === '') return 'active'
   if (normalized === '1' || normalized === 'true' || normalized === 'active') return 'active'
   if (normalized === 'shadow' || normalized === 'observe' || normalized === 'diagnostic') return 'shadow'
   return 'off'

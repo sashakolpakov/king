@@ -4,14 +4,13 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../realtime/realtime_call_presence_db.php';
 require_once __DIR__ . '/../realtime/realtime_gossipmesh_room_state.php';
-require_once __DIR__ . '/../realtime/realtime_sfu_store.php';
 
 /**
  * Build the admin video-operations snapshot from current realtime presence.
  *
  * The dashboard must not count invited/assigned participants as concurrent
  * users. A participant is live only while a fresh websocket call-presence row
- * exists; SFU publisher state is reported separately as media-plane telemetry.
+ * exists; media-plane routing is reported through GossipMesh topology state.
  *
  * @return array<string, mixed>
  */
@@ -20,7 +19,6 @@ function videochat_video_operations_snapshot(PDO $pdo, ?int $nowEpoch = null): a
     $now = $nowEpoch ?? time();
     $nowMs = $now * 1000;
     videochat_realtime_presence_db_bootstrap($pdo);
-    videochat_sfu_bootstrap($pdo);
     videochat_realtime_presence_db_prune($pdo, $nowMs);
 
     $rows = videochat_video_operations_fetch_live_call_rows($pdo, $nowMs);
@@ -73,9 +71,10 @@ function videochat_video_operations_snapshot(PDO $pdo, ?int $nowEpoch = null): a
                 'internal' => videochat_video_operations_int($row['live_internal'] ?? 0),
                 'external' => videochat_video_operations_int($row['live_external'] ?? 0),
             ],
-            'sfu' => [
-                'publishers' => videochat_video_operations_int($row['sfu_publishers'] ?? 0),
-                'publisher_users' => videochat_video_operations_int($row['sfu_publisher_users'] ?? 0),
+            'media_plane' => [
+                'mode' => 'gossip_mesh',
+                'publishers' => $liveTotal,
+                'publisher_users' => $liveTotal,
             ],
             'assigned_participants' => [
                 'total' => videochat_video_operations_int($row['assigned_total'] ?? 0),
@@ -107,7 +106,7 @@ function videochat_video_operations_snapshot(PDO $pdo, ?int $nowEpoch = null): a
             'live_calls' => count($runningCalls),
             'concurrent_participants' => $concurrentParticipants,
         ],
-        'transport' => videochat_video_operations_sfu_transport_snapshot($pdo, $nowMs),
+        'transport' => videochat_video_operations_gossip_transport_snapshot($pdo, $nowMs),
         'running_calls' => $runningCalls,
         'time' => gmdate('c', $now),
     ];
@@ -116,7 +115,7 @@ function videochat_video_operations_snapshot(PDO $pdo, ?int $nowEpoch = null): a
 /**
  * @return array<string, mixed>
  */
-function videochat_video_operations_sfu_transport_snapshot(PDO $pdo, int $nowMs): array
+function videochat_video_operations_gossip_transport_snapshot(PDO $pdo, int $nowMs): array
 {
     return [
         'recent_frame_count' => 0,
@@ -135,7 +134,6 @@ function videochat_video_operations_fetch_live_call_rows(PDO $pdo, int $nowMs): 
 {
     $freshnessMs = videochat_realtime_presence_db_ttl_ms();
     $presenceCutoffMs = max(0, $nowMs - $freshnessMs);
-    $sfuCutoffMs = max(0, $nowMs - $freshnessMs);
 
     $statement = $pdo->prepare(
         <<<'SQL'
@@ -158,8 +156,8 @@ SELECT
     COALESCE(assigned.assigned_total, 0) AS assigned_total,
     COALESCE(assigned.assigned_internal, 0) AS assigned_internal,
     COALESCE(assigned.assigned_external, 0) AS assigned_external,
-    COALESCE(sfu.sfu_publishers, 0) AS sfu_publishers,
-    COALESCE(sfu.sfu_publisher_users, 0) AS sfu_publisher_users
+    live.live_total AS media_publishers,
+    live.live_total AS media_publisher_users
 FROM calls
 INNER JOIN users owners ON owners.id = calls.owner_user_id
 INNER JOIN (
@@ -193,15 +191,6 @@ LEFT JOIN (
     FROM call_participants
     GROUP BY call_id
 ) assigned ON assigned.call_id = calls.id
-LEFT JOIN (
-    SELECT
-        room_id,
-        COUNT(*) AS sfu_publishers,
-        COUNT(DISTINCT user_id) AS sfu_publisher_users
-    FROM sfu_publishers
-    WHERE updated_at_ms >= :sfu_cutoff_ms
-    GROUP BY room_id
-) sfu ON sfu.room_id = calls.room_id
 WHERE lower(trim(calls.status)) NOT IN ('ended', 'cancelled')
 ORDER BY
     live.running_since ASC,
@@ -212,7 +201,6 @@ SQL
     );
     $statement->execute([
         ':presence_cutoff_ms' => $presenceCutoffMs,
-        ':sfu_cutoff_ms' => $sfuCutoffMs,
     ]);
 
     $rows = $statement instanceof PDOStatement ? $statement->fetchAll(PDO::FETCH_ASSOC) : [];

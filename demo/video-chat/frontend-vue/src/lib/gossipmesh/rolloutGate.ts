@@ -152,7 +152,7 @@ export function deriveGossipRolloutGateState(input = {}, options = {}) {
   const mediaSecurityRecoveryReady = participantSetRecoveryInFlight <= thresholds.maxParticipantSetRecoveryInFlight
     && participantSetRecoveryRate <= thresholds.maxParticipantSetRecoveryRate
     && protectedFrameDecryptFailureRate <= thresholds.maxProtectedFrameDecryptFailureRate;
-  const sfuBaselineHealthy = mediaSecurityRecoveryReady
+  const serverMediaBaselineHealthy = mediaSecurityRecoveryReady
     && keyframeRequestRate <= thresholds.maxKeyframeRequestRate
     && staleTargetPruneRate <= thresholds.maxStaleTargetPruneRate
     && encoderLifecycleCloseRate <= thresholds.maxEncoderLifecycleCloseRate
@@ -165,26 +165,26 @@ export function deriveGossipRolloutGateState(input = {}, options = {}) {
   if (participantSetRecoveryInFlight > thresholds.maxParticipantSetRecoveryInFlight) mediaSecurityBuckets.push('participant_set_recovery_in_flight');
   if (participantSetRecoveryRate > thresholds.maxParticipantSetRecoveryRate) mediaSecurityBuckets.push('participant_set_recovery_storm');
   if (protectedFrameDecryptFailureRate > thresholds.maxProtectedFrameDecryptFailureRate) mediaSecurityBuckets.push('protected_decrypt_burst');
-  const sfuFallbackBuckets = [];
-  if (keyframeRequestRate > thresholds.maxKeyframeRequestRate) sfuFallbackBuckets.push('keyframe_storm');
-  if (staleTargetPruneRate > thresholds.maxStaleTargetPruneRate) sfuFallbackBuckets.push('stale_target_prune_storm');
-  if (encoderLifecycleCloseRate > thresholds.maxEncoderLifecycleCloseRate) sfuFallbackBuckets.push('encoder_lifecycle_close_storm');
-  if (sendBackpressureAbortRate > thresholds.maxSendBackpressureAbortRate) sfuFallbackBuckets.push('send_backpressure_abort_storm');
-  const sfuBaselineRequiredForActive = !gossipPrimary;
+  const serverMediaFallbackBuckets = [];
+  if (keyframeRequestRate > thresholds.maxKeyframeRequestRate) serverMediaFallbackBuckets.push('keyframe_storm');
+  if (staleTargetPruneRate > thresholds.maxStaleTargetPruneRate) serverMediaFallbackBuckets.push('stale_target_prune_storm');
+  if (encoderLifecycleCloseRate > thresholds.maxEncoderLifecycleCloseRate) serverMediaFallbackBuckets.push('encoder_lifecycle_close_storm');
+  if (sendBackpressureAbortRate > thresholds.maxSendBackpressureAbortRate) serverMediaFallbackBuckets.push('send_backpressure_abort_storm');
+  const serverMediaBaselineRequiredForActive = !gossipPrimary;
   const blockingBuckets = [
     ...gossipTopologyBuckets,
     ...mediaSecurityBuckets,
-    ...(sfuBaselineRequiredForActive ? sfuFallbackBuckets : []),
+    ...(serverMediaBaselineRequiredForActive ? serverMediaFallbackBuckets : []),
   ];
   const activeAllowed = requestedMode === 'active'
     && gossipTopologyHealthy
     && mediaSecurityRecoveryReady
-    && (!sfuBaselineRequiredForActive || sfuBaselineHealthy);
+    && (!serverMediaBaselineRequiredForActive || serverMediaBaselineHealthy);
   const decision = requestedMode === 'shadow'
     ? 'shadow_observe'
     : (activeAllowed
       ? (gossipPrimary ? 'gossip_primary_active_allowed' : 'active_allowed_diagnostic')
-      : (gossipPrimary ? 'gossip_topology_blocked' : 'sfu_first_explicit'));
+      : (gossipPrimary ? 'gossip_topology_blocked' : 'server_first_explicit'));
 
   return {
     kind: 'gossip_rollout_gate_state',
@@ -193,19 +193,19 @@ export function deriveGossipRolloutGateState(input = {}, options = {}) {
     decision,
     active_allowed: activeAllowed,
     observational_only: requestedMode !== 'active' || !activeAllowed,
-    sfu_first: !gossipPrimary && !activeAllowed,
-    sfu_baseline_required_for_active: sfuBaselineRequiredForActive,
+    server_first: !gossipPrimary && !activeAllowed,
+    server_media_baseline_required_for_active: serverMediaBaselineRequiredForActive,
     rtc_ready: rtcReady,
     telemetry_ready: telemetryReady,
     gossip_topology_healthy: gossipTopologyHealthy,
     gossip_media_healthy: gossipMediaHealthy,
-    sfu_baseline_healthy: sfuBaselineHealthy,
-    sfu_fallback_healthy: sfuBaselineHealthy,
+    server_media_baseline_healthy: serverMediaBaselineHealthy,
+    server_media_fallback_healthy: serverMediaBaselineHealthy,
     media_security_recovery_ready: mediaSecurityRecoveryReady,
     blocking_buckets: blockingBuckets,
     gossip_topology_buckets: gossipTopologyBuckets,
     media_security_buckets: mediaSecurityBuckets,
-    sfu_fallback_buckets: sfuFallbackBuckets,
+    server_media_fallback_buckets: serverMediaFallbackBuckets,
     peer_count: aggregate.peer_count,
     rtc_peer_count: aggregate.rtc_peer_count,
     min_neighbor_count: aggregate.min_neighbor_count,
@@ -230,23 +230,23 @@ function inertGateState(reason) {
   return {
     kind: 'gossip_rollout_gate_state',
     data_lane_mode: 'off',
-    media_carrier_mode: 'sfu_first',
-    decision: 'sfu_first_explicit',
+    media_carrier_mode: 'server_first',
+    decision: 'server_first_explicit',
     active_allowed: false,
     observational_only: true,
-    sfu_first: true,
-    sfu_baseline_required_for_active: true,
+    server_first: true,
+    server_media_baseline_required_for_active: true,
     rtc_ready: false,
     telemetry_ready: false,
     gossip_topology_healthy: false,
     gossip_media_healthy: false,
-    sfu_baseline_healthy: false,
-    sfu_fallback_healthy: false,
+    server_media_baseline_healthy: false,
+    server_media_fallback_healthy: false,
     media_security_recovery_ready: false,
     blocking_buckets: [reason],
     gossip_topology_buckets: [reason],
     media_security_buckets: [],
-    sfu_fallback_buckets: [],
+    server_media_fallback_buckets: [],
     reason,
     peer_count: 0,
     rtc_peer_count: 0,
@@ -270,9 +270,9 @@ function inertGateState(reason) {
 
 function sanitizeAggregate(input) {
   const rolloutGate = input.rollout_gate && typeof input.rollout_gate === 'object' ? input.rollout_gate : null;
-  const sfuBaseline = input.sfu_baseline_health && typeof input.sfu_baseline_health === 'object'
-    ? input.sfu_baseline_health
-    : (input.sfu_baseline && typeof input.sfu_baseline === 'object' ? input.sfu_baseline : null);
+  const serverMediaBaseline = input.server_media_baseline_health && typeof input.server_media_baseline_health === 'object'
+    ? input.server_media_baseline_health
+    : (input.server_media_baseline && typeof input.server_media_baseline === 'object' ? input.server_media_baseline : null);
   const mediaSecurityBaseline = input.media_security_readiness && typeof input.media_security_readiness === 'object'
     ? input.media_security_readiness
     : (input.media_security && typeof input.media_security === 'object' ? input.media_security : null);
@@ -283,10 +283,10 @@ function sanitizeAggregate(input) {
   const peerNeighborCounts = peers.map((peer) => clampInt(peer?.neighbor_count, 0, 1000)).filter((value) => value > 0);
   const peerTopologyEpochs = peers.map((peer) => clampInt(peer?.topology_epoch, 0, 1_000_000_000));
   const totals = sanitizeCounters(input.totals || input.counters || {});
-  mergeBaselineCounters(totals, sfuBaseline);
+  mergeBaselineCounters(totals, serverMediaBaseline);
   mergeBaselineCounters(totals, mediaSecurityBaseline);
   const baselineSampleCount = clampInt(
-    sfuBaseline?.sample_count ?? sfuBaseline?.baseline_sample_count ?? rolloutGate?.baseline_sample_count,
+    serverMediaBaseline?.sample_count ?? serverMediaBaseline?.baseline_sample_count ?? rolloutGate?.baseline_sample_count,
     0,
     1_000_000_000,
   );
@@ -317,11 +317,11 @@ function mergeBaselineCounters(totals, baseline) {
   const aliases = {
     participant_set_recoveries: ['participant_set_recoveries', 'participant_set_recovery_events', 'media_security_participant_set_recoveries'],
     participant_set_recovery_in_flight: ['participant_set_recovery_in_flight', 'media_security_recovery_in_flight'],
-    protected_decrypt_failures: ['protected_decrypt_failures', 'protected_frame_decrypt_failures', 'sfu_protected_frame_decrypt_failed'],
-    keyframe_requests: ['keyframe_requests', 'full_keyframe_requests', 'sfu_remote_full_keyframe_requests'],
+    protected_decrypt_failures: ['protected_decrypt_failures', 'protected_frame_decrypt_failures', 'server_media_protected_frame_decrypt_failed'],
+    keyframe_requests: ['keyframe_requests', 'full_keyframe_requests', 'server_media_remote_full_keyframe_requests'],
     stale_target_prunes: ['stale_target_prunes', 'target_not_in_room_prunes', 'gossip_assigned_neighbor_prunes'],
     encoder_lifecycle_closes: ['encoder_lifecycle_closes', 'protected_browser_video_encoder_closes'],
-    send_backpressure_aborts: ['send_backpressure_aborts', 'sfu_send_backpressure_aborts'],
+    send_backpressure_aborts: ['send_backpressure_aborts', 'server_media_send_backpressure_aborts'],
   };
   for (const [target, keys] of Object.entries(aliases)) {
     const value = keys.reduce((sum, key) => sum + clampInt(baseline[key], 0, 1_000_000_000), 0);
@@ -351,8 +351,8 @@ function normalizeMode(value) {
 function normalizeMediaCarrierMode(value) {
   const mode = String(value || '').trim().toLowerCase();
   if (mode === 'gossip_primary' || mode === 'gossip-primary' || mode === 'gossip') return 'gossip_primary';
-  if (mode === 'sfu_mirror' || mode === 'sfu-mirror' || mode === 'mirror') return 'sfu_mirror';
-  return 'sfu_first';
+  if (mode === 'server_mirror' || mode === 'server-mirror' || mode === 'mirror') return 'server_mirror';
+  return 'server_first';
 }
 
 function boundedRate(numerator, denominator) {

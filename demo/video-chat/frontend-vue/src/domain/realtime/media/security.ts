@@ -176,13 +176,13 @@ export class MediaSecuritySession {
     this.state = 'rekeying';
   }
 
-  capabilityPayload(runtimePath = 'wlvc_sfu') {
+  capabilityPayload(runtimePath = 'wlvc_gossip') {
     const supportedKexSuites = [CLASSICAL_KEX_SUITE];
     if (this.hybridKexProvider && this.hybridPublicKeyBytes?.byteLength > 0) {
       supportedKexSuites.unshift(HYBRID_KEX_SUITE);
     }
     return {
-      runtime_path: asString(runtimePath) || 'wlvc_sfu',
+      runtime_path: asString(runtimePath) || 'wlvc_gossip',
       supports_protected_media_frame_v1: true,
       supports_insertable_streams: MediaSecuritySession.supportsNativeTransforms(),
       supports_wlvc_protected_frame: true,
@@ -246,7 +246,7 @@ export class MediaSecuritySession {
     }));
   }
 
-  async buildHelloSignal(targetUserId, runtimePath = 'wlvc_sfu') {
+  async buildHelloSignal(targetUserId, runtimePath = 'wlvc_gossip') {
     if (!(await this.ensureReady())) return null;
     const target = normalizeUserId(targetUserId);
     if (target <= 0 || target === this.userId) return null;
@@ -618,11 +618,11 @@ export class MediaSecuritySession {
     return { epoch: this.epoch, senderKeyId: this.senderKeyId, reason: this.lastRekeyReason };
   }
 
-  telemetrySnapshot(runtimePath = 'wlvc_sfu') {
+  telemetrySnapshot(runtimePath = 'wlvc_gossip') {
     const suite = this.selectedKexSuite || KEX_SUITE;
     return {
       security_state: this.state,
-      runtime_path: asString(runtimePath) || 'wlvc_sfu',
+      runtime_path: asString(runtimePath) || 'wlvc_gossip',
       policy_mode: this.policy,
       kex_policy: this.kexPolicy,
       kex_suite: suite,

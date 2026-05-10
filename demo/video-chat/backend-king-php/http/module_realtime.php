@@ -15,10 +15,6 @@ require_once __DIR__ . '/../domain/realtime/realtime_sputnik_dev.php';
 require_once __DIR__ . '/../domain/realtime/realtime_lobby_sync.php';
 require_once __DIR__ . '/../domain/realtime/realtime_room_snapshot.php';
 require_once __DIR__ . '/../domain/realtime/realtime_gossipmesh.php';
-require_once __DIR__ . '/../domain/realtime/realtime_sfu_iibin.php';
-require_once __DIR__ . '/../domain/realtime/realtime_sfu_store.php';
-require_once __DIR__ . '/../domain/realtime/realtime_sfu_session_protocol.php';
-require_once __DIR__ . '/../domain/realtime/realtime_sfu_gateway.php';
 require_once __DIR__ . '/module_realtime_attachments.php';
 require_once __DIR__ . '/module_realtime_websocket_commands.php';
 require_once __DIR__ . '/module_realtime_websocket_brokers.php';
@@ -156,19 +152,6 @@ function videochat_handle_realtime_routes(
     );
     if ($attachmentResponse !== null) {
         return $attachmentResponse;
-    }
-
-    if ($path === '/sfu') {
-        return videochat_handle_sfu_routes(
-            $path,
-            $request,
-            $presenceState,
-            $authenticateRequest,
-            $authFailureResponse,
-            $rbacFailureResponse,
-            $errorResponse,
-            $openDatabase
-        );
     }
 
     return videochat_handle_realtime_websocket_route(

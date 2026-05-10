@@ -29,7 +29,7 @@ import {
 } from './publisherFrameDispatch';
 
 export const PROTECTED_BROWSER_VIDEO_CODEC_ID = 'webcodecs_vp8';
-export const PROTECTED_BROWSER_VIDEO_RUNTIME_ID = 'wlvc_sfu';
+export const PROTECTED_BROWSER_VIDEO_RUNTIME_ID = 'wlvc_gossip';
 export const PROTECTED_BROWSER_VIDEO_SOURCE_BACKEND = 'video_frame_webcodecs_vp8';
 export const PROTECTED_BROWSER_VIDEO_READBACK_METHOD = 'video_frame_webcodecs_direct';
 

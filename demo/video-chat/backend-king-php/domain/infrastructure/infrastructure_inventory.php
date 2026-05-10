@@ -54,7 +54,6 @@ function videochat_infra_deployment_snapshot(): array
         'public_domain' => $domain,
         'api_domain' => videochat_infra_env('VIDEOCHAT_DEPLOY_API_DOMAIN', 'api.' . $domain),
         'ws_domain' => videochat_infra_env('VIDEOCHAT_DEPLOY_WS_DOMAIN', 'ws.' . $domain),
-        'sfu_domain' => videochat_infra_env('VIDEOCHAT_DEPLOY_SFU_DOMAIN', 'sfu.' . $domain),
         'turn_domain' => videochat_infra_env('VIDEOCHAT_DEPLOY_TURN_DOMAIN', 'turn.' . $domain),
         'cdn_domain' => videochat_infra_env('VIDEOCHAT_DEPLOY_CDN_DOMAIN', 'cdn.' . $domain),
         'inventory_mode' => videochat_infra_env('VIDEOCHAT_INFRA_PROVIDER', 'auto'),
@@ -119,11 +118,6 @@ function videochat_infra_default_services_for_node(string $nodeId, array $deploy
     if (in_array('ws', $roles, true)) {
         $services[] = videochat_infra_service_row('ws:' . $nodeId, $nodeId, 'king-ws', 'Lobby websocket', $serviceStatus, 'wss://' . (string) $deployment['ws_domain'] . '/ws', [
             'workers' => (int) videochat_infra_env('VIDEOCHAT_V1_WS_WORKERS', '8'),
-        ]);
-    }
-    if (in_array('sfu', $roles, true)) {
-        $services[] = videochat_infra_service_row('sfu:' . $nodeId, $nodeId, 'king-sfu', 'SFU websocket', $serviceStatus, 'wss://' . (string) $deployment['sfu_domain'] . '/sfu', [
-            'workers' => (int) videochat_infra_env('VIDEOCHAT_V1_SFU_WORKERS', '8'),
         ]);
     }
     if (in_array('turn', $roles, true)) {
@@ -310,15 +304,10 @@ function videochat_infra_hcloud_roles_for_server(array $server): array
     }
 
     if ($roleText !== '') {
-        return videochat_infra_csv($roleText, ['edge', 'http', 'ws', 'sfu']);
+        return videochat_infra_csv($roleText, ['edge', 'http', 'ws']);
     }
 
-    $name = strtolower((string) ($server['name'] ?? ''));
-    if (str_contains($name, 'sfu')) {
-        return ['sfu'];
-    }
-
-    return videochat_infra_csv(videochat_infra_env('VIDEOCHAT_INFRA_NODE_ROLES', 'edge,http,ws,sfu'), ['edge', 'http', 'ws', 'sfu']);
+    return videochat_infra_csv(videochat_infra_env('VIDEOCHAT_INFRA_NODE_ROLES', 'edge,http,ws'), ['edge', 'http', 'ws']);
 }
 
 /** @return array{provider: array<string, mixed>, nodes: array<int, array<string, mixed>>, services: array<int, array<string, mixed>>} */
@@ -330,7 +319,7 @@ function videochat_infra_hcloud_inventory(array $deployment): array
         return [
             'provider' => videochat_infra_provider_row('hetzner', 'Hetzner Cloud', 'cloud', false, 'not_configured', [
                 'list_nodes' => false,
-                'spawn_sfu_instance' => false,
+                'spawn_media_worker' => false,
             ], [
                 'api_base' => $base,
                 'reason' => 'missing_token',
@@ -350,7 +339,7 @@ function videochat_infra_hcloud_inventory(array $deployment): array
         return [
             'provider' => videochat_infra_provider_row('hetzner', 'Hetzner Cloud', 'cloud', true, 'error', [
                 'list_nodes' => false,
-                'spawn_sfu_instance' => false,
+                'spawn_media_worker' => false,
             ], [
                 'api_base' => $base,
                 'error' => $response['error'],
@@ -407,7 +396,7 @@ function videochat_infra_hcloud_inventory(array $deployment): array
     return [
         'provider' => videochat_infra_provider_row('hetzner', 'Hetzner Cloud', 'cloud', true, 'connected', [
             'list_nodes' => true,
-            'spawn_sfu_instance' => true,
+            'spawn_media_worker' => true,
         ], [
             'api_base' => $base,
             'server_count' => count($nodes),
@@ -421,7 +410,7 @@ function videochat_infra_hcloud_inventory(array $deployment): array
 function videochat_infra_static_inventory(array $deployment): array
 {
     $host = videochat_infra_env('VIDEOCHAT_DEPLOY_HOST', videochat_infra_env('VIDEOCHAT_V1_PUBLIC_HOST', gethostname() ?: 'local'));
-    $roles = videochat_infra_csv(videochat_infra_env('VIDEOCHAT_INFRA_NODE_ROLES', 'edge,http,ws,sfu'), ['edge', 'http', 'ws', 'sfu']);
+    $roles = videochat_infra_csv(videochat_infra_env('VIDEOCHAT_INFRA_NODE_ROLES', 'edge,http,ws'), ['edge', 'http', 'ws']);
     $nodeId = 'static:' . preg_replace('/[^a-zA-Z0-9_.:-]+/', '-', $host);
     $node = videochat_infra_node_row(
         $nodeId,
@@ -437,7 +426,7 @@ function videochat_infra_static_inventory(array $deployment): array
     return [
         'provider' => videochat_infra_provider_row('static', 'Static / self-hosted', 'generic', true, 'configured', [
             'list_nodes' => true,
-            'spawn_sfu_instance' => false,
+            'spawn_media_worker' => false,
         ]),
         'nodes' => [$node],
         'services' => videochat_infra_default_services_for_node($nodeId, $deployment, $roles, 'running'),
@@ -450,7 +439,7 @@ function videochat_infra_kubernetes_provider(): array
     $detected = videochat_infra_env('KUBERNETES_SERVICE_HOST') !== '' || videochat_infra_env_bool('VIDEOCHAT_INFRA_KUBERNETES_ENABLE');
     return videochat_infra_provider_row('kubernetes', 'Kubernetes', 'orchestrator', $detected, $detected ? 'detected' : 'not_detected', [
         'list_nodes' => false,
-        'scale_sfu_deployment' => $detected,
+        'scale_media_workers' => $detected,
     ], [
         'namespace' => videochat_infra_env('VIDEOCHAT_INFRA_KUBERNETES_NAMESPACE', videochat_infra_env('POD_NAMESPACE', '')),
         'pod_name' => videochat_infra_env('HOSTNAME', ''),
@@ -571,7 +560,7 @@ function videochat_infra_telemetry_snapshot(): array
             'service_names' => [
                 'http' => videochat_infra_env('VIDEOCHAT_OTEL_SERVICE_NAME_HTTP', 'king-videochat-http'),
                 'ws' => videochat_infra_env('VIDEOCHAT_OTEL_SERVICE_NAME_WS', 'king-videochat-ws'),
-                'sfu' => videochat_infra_env('VIDEOCHAT_OTEL_SERVICE_NAME_SFU', 'king-videochat-sfu'),
+                'media' => videochat_infra_env('VIDEOCHAT_OTEL_SERVICE_NAME_MEDIA', 'king-videochat-media'),
             ],
             'mode' => 'exporter',
         ],
@@ -588,18 +577,18 @@ function videochat_infra_scaling_snapshot(array $providers, array $nodes): array
         }
     }
 
-    $hetznerCanSpawn = (bool) ($providerById['hetzner']['capabilities']['spawn_sfu_instance'] ?? false);
-    $kubernetesCanScale = (bool) ($providerById['kubernetes']['capabilities']['scale_sfu_deployment'] ?? false);
-    $sfuNodeCount = 0;
+    $hetznerCanSpawn = (bool) ($providerById['hetzner']['capabilities']['spawn_media_worker'] ?? false);
+    $kubernetesCanScale = (bool) ($providerById['kubernetes']['capabilities']['scale_media_workers'] ?? false);
+    $mediaNodeCount = 0;
     foreach ($nodes as $node) {
-        if (is_array($node) && in_array('sfu', is_array($node['roles'] ?? null) ? $node['roles'] : [], true)) {
-            $sfuNodeCount++;
+        if (is_array($node) && in_array('ws', is_array($node['roles'] ?? null) ? $node['roles'] : [], true)) {
+            $mediaNodeCount++;
         }
     }
 
     return [
         'strategy' => count($nodes) <= 1 ? 'single_node_split_services' : 'multi_node_provider_inventory',
-        'sfu_nodes' => $sfuNodeCount,
+        'media_nodes' => $mediaNodeCount,
         'modes' => [
             [
                 'id' => 'monorepo_service_workers',
@@ -608,22 +597,22 @@ function videochat_infra_scaling_snapshot(array $providers, array $nodes): array
                 'write_action' => false,
             ],
             [
-                'id' => 'hetzner_sfu_node',
-                'label' => 'Provision dedicated SFU node through Hetzner Cloud',
+                'id' => 'hetzner_media_worker_node',
+                'label' => 'Provision dedicated media worker node through Hetzner Cloud',
                 'available' => $hetznerCanSpawn,
                 'write_action' => false,
             ],
             [
-                'id' => 'kubernetes_sfu_replicas',
-                'label' => 'Scale SFU deployment replicas in Kubernetes',
+                'id' => 'kubernetes_media_worker_replicas',
+                'label' => 'Scale media worker replicas in Kubernetes',
                 'available' => $kubernetesCanScale,
                 'write_action' => false,
             ],
         ],
         'write_actions_enabled' => false,
-        'next_step' => $sfuNodeCount <= 1
-            ? 'Add an audited scaling action before creating additional SFU capacity from the dashboard.'
-            : 'Review SFU placement and shared-state readiness before changing replica counts.',
+        'next_step' => $mediaNodeCount <= 1
+            ? 'Add an audited scaling action before creating additional media-worker capacity from the dashboard.'
+            : 'Review media-worker placement and shared-state readiness before changing replica counts.',
     ];
 }
 

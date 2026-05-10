@@ -1,4 +1,4 @@
-import { arrayBufferToBase64Url, base64UrlToArrayBuffer } from '../../../../lib/sfu/framePayload';
+import { arrayBufferToBase64Url, base64UrlToArrayBuffer } from '../../../../lib/media/base64Payload';
 import { GOSSIP_DATA_LANE_CONFIG, VIDEOCHAT_MEDIA_CARRIER_CONFIG } from '../../../../lib/gossipmesh/featureFlags';
 import { GossipController } from '../../../../lib/gossipmesh/gossipController';
 import { deriveGossipRolloutGateState } from '../../../../lib/gossipmesh/rolloutGate';
@@ -19,7 +19,7 @@ export function createCallWorkspaceGossipDataLane({
     getConnectedParticipantCount = () => 0,
     getLocalAudioLevel = () => null,
     getLocalAudioStream = () => null,
-    handleSFUEncodedFrame,
+    handleGossipEncodedFrame,
     sendSocketFrame,
   } = callbacks;
   let gossipDirectTransport = null;
@@ -51,8 +51,8 @@ export function createCallWorkspaceGossipDataLane({
     return {
       media_carrier_mode: VIDEOCHAT_MEDIA_CARRIER_CONFIG.mode,
       media_carrier_diagnostics_label: VIDEOCHAT_MEDIA_CARRIER_CONFIG.diagnosticsLabel,
-      gossip_may_publish_without_sfu: VIDEOCHAT_MEDIA_CARRIER_CONFIG.gossipMayPublishWithoutSfu,
-      sfu_send_optional: VIDEOCHAT_MEDIA_CARRIER_CONFIG.sfuSendIsOptional,
+      gossip_may_publish_without_server: VIDEOCHAT_MEDIA_CARRIER_CONFIG.gossipMayPublishWithoutServer,
+      server_media_send_optional: VIDEOCHAT_MEDIA_CARRIER_CONFIG.serverMediaSendIsOptional,
     };
   }
 
@@ -563,8 +563,8 @@ export function createCallWorkspaceGossipDataLane({
     if (!gossipDataPlaneAllowed()) return false;
     const msg = delivery?.message || null;
     if (!msg) return false;
-    if (msg.type !== 'sfu/frame') return false;
-    const frame = sfuFrameFromGossipMessage(msg, delivery);
+    if (msg.type !== 'gossip/video-frame') return false;
+    const frame = gossipFrameFromMessage(msg, delivery);
     if (!frame) return false;
     requestGossipRecoveryForReceivedFrame(frame, delivery);
     captureClientDiagnostic({
@@ -587,7 +587,7 @@ export function createCallWorkspaceGossipDataLane({
         layout_mode: String(frame.layoutMode || ''),
       },
     });
-    handleSFUEncodedFrame(frame);
+    handleGossipEncodedFrame(frame);
     return true;
   }
 
@@ -819,7 +819,7 @@ export function createCallWorkspaceGossipDataLane({
       ? String(frame.protectionMode || 'protected')
       : String(frame.protectionMode || 'transport_only');
     const msg = {
-      type: 'sfu/frame',
+      type: 'gossip/video-frame',
       protocol_version: 2,
       publisher_id: String(frame.publisherId || peerId),
       publisher_user_id: String(frame.publisherUserId || peerId),
@@ -1037,7 +1037,7 @@ export function createCallWorkspaceGossipDataLane({
       return Boolean(lastGossipRolloutGateState?.gossip_topology_healthy)
         && Boolean(lastGossipRolloutGateState?.media_security_recovery_ready);
     }
-    return Boolean(lastGossipRolloutGateState?.sfu_baseline_healthy)
+    return Boolean(lastGossipRolloutGateState?.server_media_baseline_healthy)
       && Boolean(lastGossipRolloutGateState?.media_security_recovery_ready);
   }
 
@@ -1115,7 +1115,7 @@ export function createCallWorkspaceGossipDataLane({
       code: 'gossip_data_lane_shadow_would_publish',
       message: VIDEOCHAT_MEDIA_CARRIER_CONFIG.gossipPrimary
         ? 'Gossip data lane deferred a frame until assigned neighbors are ready.'
-        : 'Gossip data lane recorded a frame that would have been published after SFU baseline send; media was not published.',
+        : 'Gossip data lane recorded a frame that would have been published after server media baseline send; media was not published.',
       payload: {
         ...mediaCarrierDiagnosticPayload(),
         data_lane_mode: GOSSIP_DATA_LANE_CONFIG.mode,
@@ -1129,9 +1129,9 @@ export function createCallWorkspaceGossipDataLane({
         gate_decision: String(lastGossipRolloutGateState?.decision || 'no_rollout_gate_ack'),
         active_allowed: Boolean(lastGossipRolloutGateState?.active_allowed),
         gossip_topology_healthy: Boolean(lastGossipRolloutGateState?.gossip_topology_healthy),
-        sfu_baseline_required_for_active: Boolean(lastGossipRolloutGateState?.sfu_baseline_required_for_active),
-        sfu_baseline_healthy: Boolean(lastGossipRolloutGateState?.sfu_baseline_healthy),
-        sfu_fallback_healthy: Boolean(lastGossipRolloutGateState?.sfu_fallback_healthy),
+        server_media_baseline_required_for_active: Boolean(lastGossipRolloutGateState?.server_media_baseline_required_for_active),
+        server_media_baseline_healthy: Boolean(lastGossipRolloutGateState?.server_media_baseline_healthy),
+        server_media_fallback_healthy: Boolean(lastGossipRolloutGateState?.server_media_fallback_healthy),
         media_security_recovery_ready: Boolean(lastGossipRolloutGateState?.media_security_recovery_ready),
         blocking_buckets: Array.isArray(lastGossipRolloutGateState?.blocking_buckets)
           ? lastGossipRolloutGateState.blocking_buckets.slice(0, 8).map((bucket) => String(bucket || ''))
@@ -1158,7 +1158,7 @@ export function createCallWorkspaceGossipDataLane({
     return new ArrayBuffer(0);
   }
 
-  function sfuFrameFromGossipMessage(msg, delivery) {
+  function gossipFrameFromMessage(msg, delivery) {
     const publisherId = String(msg.publisherId || msg.publisher_id || msg.publisher_user_id || '').trim();
     const trackId = String(msg.trackId || msg.track_id || '').trim();
     if (publisherId === '' || trackId === '') return null;

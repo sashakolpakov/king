@@ -56,7 +56,7 @@ export function createCallWorkspaceMediaSecurityRuntime({
 
   function currentMediaSecurityRuntimePath() {
     if (isNativeWebRtcRuntimePath()) return 'webrtc_native';
-    return 'wlvc_sfu';
+    return 'wlvc_gossip';
   }
 
   function normalizeRemoteMediaSecurityUserId(userId) {

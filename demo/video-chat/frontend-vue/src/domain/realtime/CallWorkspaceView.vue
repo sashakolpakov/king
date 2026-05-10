@@ -675,7 +675,7 @@ const {
   callbacks: {
     activeCallId: () => activeCallId.value, activeRoomId: () => activeRoomId.value,
     activeSocketCallId: () => activeSocketCallId.value, captureClientDiagnostic,
-    currentUserId: () => currentUserId.value, handleSFUEncodedFrame: (...args) => handleSFUEncodedFrame(...args),
+    currentUserId: () => currentUserId.value, handleGossipEncodedFrame: (...args) => handleGossipEncodedFrame(...args),
     getConnectedParticipantCount: () => connectedParticipantUsers.value.length,
     getLocalAudioLevel: currentLocalAudioLevel,
     getLocalAudioStream: () => localFilteredStreamRef.value || localStreamRef.value,
@@ -1362,7 +1362,7 @@ const {
   findSfuRemotePeerEntryByUserId,
   getSfuClientBufferedAmount,
   getSfuRemotePeerByFrameIdentity,
-  handleSFUEncodedFrame,
+  handleGossipEncodedFrame,
   handleWlvcEncodeBackpressure,
   handleWlvcFrameSendFailure, hasLiveLocalMedia,
   isBackgroundFilterEnabledForOutgoing,

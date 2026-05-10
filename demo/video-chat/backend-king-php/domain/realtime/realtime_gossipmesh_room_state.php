@@ -63,7 +63,7 @@ function videochat_gossipmesh_room_state_payload(
                 'data_transports' => ['rtc_datachannel'],
                 'media_envelope' => VIDEOCHAT_GOSSIPMESH_DATA_ENVELOPE_CONTRACT,
                 'codec' => VIDEOCHAT_GOSSIPMESH_DATA_CODEC,
-                'sfu_fallback' => true,
+                'server_fallback' => false,
             ],
         ];
     }
@@ -79,7 +79,7 @@ function videochat_gossipmesh_room_state_payload(
         'admitted_peers' => $admittedPeers,
         'capabilities' => [
             'control_plane_authority' => 'server',
-            'media_carriers' => ['gossip_primary', 'sfu_fallback'],
+            'media_carriers' => ['gossip_primary'],
             'data_transports' => ['rtc_datachannel'],
             'media_envelope' => VIDEOCHAT_GOSSIPMESH_DATA_ENVELOPE_CONTRACT,
             'codec' => VIDEOCHAT_GOSSIPMESH_DATA_CODEC,
@@ -91,12 +91,6 @@ function videochat_gossipmesh_room_state_payload(
                 'purpose' => 'bounded_media_gossip',
                 'authority' => 'server_assigned_neighbor',
                 'bounded' => true,
-            ],
-            [
-                'transport' => 'websocket_sfu_control',
-                'purpose' => 'fallback_relay_recording',
-                'authority' => 'server',
-                'optional' => true,
             ],
         ],
         'assigned_neighbors' => $hint['neighbors'],

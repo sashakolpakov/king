@@ -124,7 +124,7 @@ $planAgain = videochat_gossipmesh_plan_topology('call-alpha', 'room-alpha', $mem
 videochat_gossipmesh_test_assert($plan === $planAgain, 'topology planning must be deterministic');
 videochat_gossipmesh_test_assert($plan['contract'] === VIDEOCHAT_GOSSIPMESH_CONTRACT, 'contract name mismatch');
 videochat_gossipmesh_test_assert($plan['authority'] === 'server', 'topology must be server authoritative');
-videochat_gossipmesh_test_assert($plan['runtime_path'] === 'wlvc_sfu', 'runtime path must stay SFU-bound for this port');
+videochat_gossipmesh_test_assert($plan['runtime_path'] === 'wlvc_gossip', 'runtime path must stay gossip-bound for this port');
 videochat_gossipmesh_test_assert(
     $plan['envelope_contract'] === 'king-video-chat-protected-media-transport-envelope',
     'protected envelope contract must be advertised'
@@ -373,7 +373,7 @@ $telemetryFrame = json_encode([
         'peer_id' => '10',
         'transport_kind' => 'rtc_datachannel',
         'data_lane_mode' => 'active',
-        'rollout_strategy' => 'sfu_first_explicit',
+        'rollout_strategy' => 'gossip_primary',
         'neighbor_count' => 4,
         'topology_epoch' => 123456,
         'counters' => [
@@ -393,7 +393,7 @@ $telemetryFrame = json_encode([
 $telemetryCommand = videochat_gossipmesh_decode_telemetry_snapshot((string) $telemetryFrame);
 videochat_gossipmesh_test_assert((bool) ($telemetryCommand['ok'] ?? false), 'telemetry snapshot should decode on ops lane');
 videochat_gossipmesh_test_assert((string) ($telemetryCommand['transport_kind'] ?? '') === 'rtc_datachannel', 'telemetry transport label mismatch');
-videochat_gossipmesh_test_assert((string) ($telemetryCommand['rollout_strategy'] ?? '') === 'sfu_first_explicit', 'telemetry rollout strategy must remain explicit SFU-first');
+videochat_gossipmesh_test_assert((string) ($telemetryCommand['rollout_strategy'] ?? '') === 'gossip_primary', 'telemetry rollout strategy must remain explicit gossip-primary');
 videochat_gossipmesh_test_assert((int) (($telemetryCommand['counters'] ?? [])['sent'] ?? -1) === 7, 'telemetry counters must include sent');
 videochat_gossipmesh_test_assert(!array_key_exists('unknown_counter_must_be_dropped', (array) ($telemetryCommand['counters'] ?? [])), 'telemetry counters must drop unknown counters');
 
@@ -424,7 +424,7 @@ videochat_gossipmesh_test_assert((bool) ($aggregate['ok'] ?? false), 'telemetry 
 videochat_gossipmesh_test_assert((int) (($aggregate['totals'] ?? [])['sent'] ?? -1) === 7, 'telemetry aggregate sent total mismatch');
 videochat_gossipmesh_test_assert((int) (($aggregate['transports'] ?? [])['rtc_datachannel'] ?? -1) === 1, 'telemetry aggregate transport label mismatch');
 videochat_gossipmesh_test_assert((string) (($aggregate['rollout_gate'] ?? [])['kind'] ?? '') === 'gossip_rollout_gate_state', 'telemetry aggregate must expose rollout gate state');
-videochat_gossipmesh_test_assert((string) (($telemetryState['gossipmesh_telemetry']['room-alpha']['peers']['10'] ?? [])['media_carrier_mode'] ?? '') === 'sfu_mirror', 'telemetry aggregate must default legacy snapshots to SFU mirror carrier');
+videochat_gossipmesh_test_assert((string) (($telemetryState['gossipmesh_telemetry']['room-alpha']['peers']['10'] ?? [])['media_carrier_mode'] ?? '') === 'gossip_primary', 'telemetry aggregate must default legacy snapshots to gossip-primary carrier');
 videochat_gossipmesh_test_assert(array_key_exists('duplicate_rate', (array) ($aggregate['rollout_gate'] ?? [])), 'telemetry rollout gate must expose duplicate rate');
 videochat_gossipmesh_test_assert(array_key_exists('ttl_exhaustion_rate', (array) ($aggregate['rollout_gate'] ?? [])), 'telemetry rollout gate must expose TTL exhaustion rate');
 videochat_gossipmesh_test_assert(array_key_exists('late_drop_rate', (array) ($aggregate['rollout_gate'] ?? [])), 'telemetry rollout gate must expose late drop rate');
@@ -848,10 +848,10 @@ videochat_gossipmesh_test_assert(count($GLOBALS['gossipmesh_sent_frames']) === 1
 $telemetryAck = (array) ($GLOBALS['gossipmesh_sent_frames'][0]['payload'] ?? []);
 videochat_gossipmesh_test_assert((string) ($telemetryAck['type'] ?? '') === 'gossip/telemetry/ack', 'websocket telemetry ack type mismatch');
 videochat_gossipmesh_test_assert((string) ($telemetryAck['lane'] ?? '') === 'ops', 'websocket telemetry ack lane mismatch');
-videochat_gossipmesh_test_assert((string) (($telemetryAck['rollout_gate'] ?? [])['decision'] ?? '') === 'sfu_first_explicit', 'websocket telemetry ack must keep conservative rollout gate decision until thresholds pass');
+videochat_gossipmesh_test_assert((string) (($telemetryAck['rollout_gate'] ?? [])['decision'] ?? '') === 'gossip_topology_blocked', 'websocket telemetry ack must keep gossip-primary blocked until thresholds pass');
 videochat_gossipmesh_test_assert(array_key_exists('rtc_ready', (array) ($telemetryAck['rollout_gate'] ?? [])), 'websocket telemetry ack must expose RTC readiness');
 videochat_gossipmesh_test_assert((int) (($presenceState['gossipmesh_telemetry']['room-alpha']['totals'] ?? [])['sent'] ?? -1) === 7, 'websocket telemetry aggregate total mismatch');
-videochat_gossipmesh_test_assert((string) (($presenceState['gossipmesh_telemetry']['room-alpha']['peers']['10'] ?? [])['rollout_strategy'] ?? '') === 'sfu_first_explicit', 'websocket telemetry aggregate must keep SFU-first rollout label');
+videochat_gossipmesh_test_assert((string) (($presenceState['gossipmesh_telemetry']['room-alpha']['peers']['10'] ?? [])['rollout_strategy'] ?? '') === 'gossip_primary', 'websocket telemetry aggregate must keep gossip-primary rollout label');
 $websocketTelemetryJson = json_encode($presenceState['gossipmesh_telemetry']['room-alpha'] ?? [], JSON_UNESCAPED_SLASHES) ?: '';
 videochat_gossipmesh_test_assert(strpos($websocketTelemetryJson, 'protected_frame') === false, 'websocket telemetry aggregate must not include protected media frames');
 videochat_gossipmesh_test_assert(strpos($websocketTelemetryJson, 'sdp') === false, 'websocket telemetry aggregate must not include SDP');
@@ -929,11 +929,11 @@ foreach (['protected_frame', 'data_base64', 'sdp', 'ice_candidate', 'raw_media_k
 }
 
 $normalMediaGuardClassification = videochat_realtime_classify_normal_media_fanout_frame(json_encode([
-    'type' => 'sfu/frame',
+    'type' => 'gossip/video-frame',
     'protected_frame' => 'KPMF',
     'track_id' => 'camera',
 ], JSON_UNESCAPED_SLASHES));
-videochat_gossipmesh_test_assert((bool) ($normalMediaGuardClassification['blocked'] ?? false), 'normal realtime websocket must classify sfu/frame as forbidden media fanout');
+videochat_gossipmesh_test_assert((bool) ($normalMediaGuardClassification['blocked'] ?? false), 'normal realtime websocket must classify gossip/video-frame as forbidden media fanout');
 $mediaFieldGuardClassification = videochat_realtime_classify_normal_media_fanout_frame(json_encode([
     'type' => 'chat/send',
     'payload' => [
@@ -955,7 +955,7 @@ videochat_gossipmesh_test_assert(!(bool) ($controlGuardClassification['blocked']
 $GLOBALS['gossipmesh_sent_frames'] = [];
 $normalMediaGuardResult = videochat_realtime_guard_no_normal_media_fanout(
     json_encode([
-        'type' => 'sfu/frame',
+        'type' => 'gossip/video-frame',
         'protected_frame' => 'KPMF',
         'track_id' => 'camera',
     ], JSON_UNESCAPED_SLASHES) ?: '',

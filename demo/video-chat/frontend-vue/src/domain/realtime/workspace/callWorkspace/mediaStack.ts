@@ -183,7 +183,7 @@ export function createCallWorkspaceMediaStack(options) {
   }
 
   const {
-    handleSFUEncodedFrame,
+    handleGossipEncodedFrame,
   } = createSfuFrameDecodeHelpers({
     captureClientDiagnostic: callbacks.captureClientDiagnostic,
     captureClientDiagnosticError: callbacks.captureClientDiagnosticError,
@@ -651,7 +651,7 @@ export function createCallWorkspaceMediaStack(options) {
     ensureSfuRemotePeerForFrame,
     findSfuRemotePeerEntryByUserId,
     getSfuRemotePeerByFrameIdentity,
-    handleSFUEncodedFrame,
+    handleGossipEncodedFrame,
     normalizeSfuPublisherId,
     remoteDecoderRuntimeName,
     renderCallVideoLayout,

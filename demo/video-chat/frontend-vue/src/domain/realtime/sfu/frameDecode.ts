@@ -573,7 +573,7 @@ export function createSfuFrameDecodeHelpers({
 
   function mediaSecurityTelemetrySnapshot() {
     try {
-      return ensureMediaSecuritySession()?.telemetrySnapshot?.('wlvc_sfu') || null;
+      return ensureMediaSecuritySession()?.telemetrySnapshot?.('wlvc_gossip') || null;
     } catch {
       return null;
     }
@@ -869,7 +869,7 @@ export function createSfuFrameDecodeHelpers({
         frameData = await ensureMediaSecuritySession().decryptProtectedFrameEnvelope({
           protectedFrame: frame.protectedFrame,
           publisherUserId: securityPublisherUserId,
-          runtimePath: 'wlvc_sfu',
+          runtimePath: 'wlvc_gossip',
           codecId: frame.codecId,
           trackId: frame.trackId,
           timestamp: frame.timestamp,
@@ -911,7 +911,7 @@ export function createSfuFrameDecodeHelpers({
           data: frame.data,
           protected: frame.protected,
           publisherUserId: securityPublisherUserId,
-          runtimePath: 'wlvc_sfu',
+          runtimePath: 'wlvc_gossip',
           codecId: frame.codecId,
           trackId: frame.trackId,
           timestamp: frame.timestamp,
@@ -1107,7 +1107,7 @@ export function createSfuFrameDecodeHelpers({
     }
   }
 
-  function handleSFUEncodedFrame(frame) {
+  function handleGossipEncodedFrame(frame) {
     if (!isWlvcRuntimePath()) return;
     const publisherId = normalizeSfuPublisherId(frame?.publisherId);
     if (publisherId === '') return;
@@ -1169,6 +1169,6 @@ export function createSfuFrameDecodeHelpers({
   }
 
   return {
-    handleSFUEncodedFrame,
+    handleGossipEncodedFrame,
   };
 }
